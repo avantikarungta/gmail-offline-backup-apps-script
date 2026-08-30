@@ -1,0 +1,4 @@
+.clasp-live-compare.*/
+.clasp.json
+node_modules/
+dist/

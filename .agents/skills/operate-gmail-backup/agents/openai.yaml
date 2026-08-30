@@ -1,0 +1,7 @@
+interface:
+  display_name: "Gmail Backup Operations"
+  short_description: "Operate, debug, and maintain the Gmail backup"
+  default_prompt: "Use $operate-gmail-backup to inspect and safely operate this repository through its Makefile."
+
+policy:
+  allow_implicit_invocation: true

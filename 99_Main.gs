@@ -1,0 +1,19 @@
+/** Thin Apps Script application entry points. */
+function doctorBackup() { return GmailBackupLibrary.doctor(); }
+function estimateBackup() { return GmailBackupLibrary.estimate(); }
+function setupBackup() { return GmailBackupLibrary.setup(); }
+function planBackup() { return GmailBackupLibrary.plan(); }
+function applyBackup() { return GmailBackupLibrary.apply(); }
+function backupStatus() { return GmailBackupLibrary.status(); }
+function agentStatus() { return GmailBackupLibrary.agentStatus(); }
+function pauseBackup() { return GmailBackupLibrary.pause(); }
+function resumeBackup() { return GmailBackupLibrary.resume(); }
+function verifyBackupSample(sampleSize) { return GmailBackupLibrary.verifySample(sampleSize); }
+function diagnoseDriveReadAccess() { return GmailBackupLibrary.diagnoseDriveReadAccess(); }
+function gmailBackupWorker() { return GmailBackupLibrary.worker(); }
+function benchmarkArchiveCompression() { return GmailBackupLibrary.benchmarkArchiveCompression(); }
+function benchmarkDriveWritePaths() { return GmailBackupLibrary.benchmarkDriveWritePaths(); }
+function configureS3Credentials() { return GmailBackupLibrary.configureS3Credentials(); }
+function clearS3Credentials(confirmation) { return GmailBackupLibrary.clearS3Credentials(confirmation); }
+function probeS3Storage() { return GmailBackupLibrary.probeS3Storage(); }
+function s3StorageStatus() { return GmailBackupLibrary.s3StorageStatus(); }

@@ -1,0 +1,36 @@
+{
+  "scriptId": "YOUR_SCRIPT_ID",
+  "rootDir": "",
+  "scriptExtensions": [
+    ".js",
+    ".gs"
+  ],
+  "htmlExtensions": [
+    ".html"
+  ],
+  "jsonExtensions": [
+    ".json"
+  ],
+  "filePushOrder": [
+    "00_ConfigRuntime.gs",
+    "10_Diagnostics.gs",
+    "20_Application.gs",
+    "25_Verification.gs",
+    "30_Worker.gs",
+    "40_Scan.gs",
+    "45_Audit.gs",
+    "50_Queue.gs",
+    "60_Export.gs",
+    "65_PlanEstimate.gs",
+    "70_DiagnosticsSupport.gs",
+    "80_StateStatus.gs",
+    "85_S3Client.gs",
+    "86_S3DriveAdapter.gs",
+    "87_S3Operations.gs",
+    "90_PlatformStorage.gs",
+    "95_CoreUtilities.gs",
+    "98_Library.gs",
+    "99_Main.gs"
+  ],
+  "skipSubdirectories": true
+}
