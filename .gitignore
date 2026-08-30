@@ -1,4 +1,50 @@
-.clasp-live-compare.*/
+# Per-installation Apps Script bindings and authorization
 .clasp.json
+.clasprc.json
+.clasp-live-compare.*/
+
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example
+.credentials/
+credentials/
+credentials*.json
+client_secret*.json
+service-account*.json
+*.key
+*.pem
+
+# Dependencies, build products, and test output
 node_modules/
 dist/
+coverage/
+.nyc_output/
+
+# Local Gmail archive material (never source code)
+/archive-manifest.json
+/catalog/
+/data/
+/plans/
+/quarantine/
+/transactions/
+/plan-estimate.json
+/status.json
+/STATUS.txt
+*.eml
+*.eml.zip
+
+# Caches, logs, and temporary files
+.cache/
+.tmp/
+tmp/
+*.log
+*.tmp
+*.swp
+*~
+
+# OS and editor metadata
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
