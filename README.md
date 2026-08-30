@@ -671,6 +671,50 @@ Never put S3 secrets in source, `.clasp.json`, Make variables, shell history,
 or command parameters. Set `S3_PROBE_MULTIPART: true` temporarily when a real
 multipart compatibility check (at least 5 MiB) is required.
 
+### Oversized-message proof outside Apps Script
+
+Changing only the storage backend does not bypass Apps Script's response-size
+limit for a single Gmail RAW response. The dependency-free local bridge in
+`scripts/external-r2.js` reuses the refreshable OAuth grant created by
+`make login-project`, fetches one selected message directly from Gmail, and
+conditionally writes an uncompressed `.eml` under an isolated R2 prefix.
+
+```sh
+cp .env.example .env
+chmod 600 .env
+make external-config-check
+make external-locate-blocked
+make external-fetch-check
+make external-r2-probe CONFIRM=external-r2-probe
+make external-export-one CONFIRM=external-export-one
+```
+
+If Drive API file authorization prevents `external-locate-blocked`, select the
+checkpointed queue item through a signed-in Drive session and store its ID in
+`GMAIL_MESSAGE_ID`. Run `external-fetch-check` before configuring R2 when the
+local OAuth client supports direct Gmail API access.
+
+When that client reports `accessNotConfigured`, open the selected message in
+the same signed-in Gmail account and use **Download message**. Then use the
+fully Make-driven local-file path:
+
+```sh
+make external-select-download
+make external-local-check
+make external-r2-probe CONFIRM=external-r2-probe
+make external-upload-local CONFIRM=external-upload-local
+```
+
+`external-select-download` refuses ambiguity: exactly one `.eml` must have
+appeared in `EXTERNAL_DOWNLOAD_DIR` inside the configured age window. The
+local check validates an RFC 822 header and prints only byte/hash metadata.
+
+Secrets and the selected message ID remain only in ignored `.env`. The bridge
+prints fingerprints and integrity summaries, never message content, local
+paths, OAuth tokens, R2 secrets, or the canonical object key. It is a bounded
+proof path, not yet a replacement for PLAN/APPLY or its catalog transaction
+protocol.
+
 ## Timing expectations
 
 PLAN is mostly count-driven and includes two ID scans, a 64-shard archive audit, and ordered queue construction. With default settings, broad initial ranges are:

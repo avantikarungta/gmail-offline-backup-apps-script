@@ -22,6 +22,7 @@ DESCRIPTION ?=
 VERSION_NUMBER ?=
 DEPLOYMENT_ID ?=
 API ?=
+EXTERNAL_ENV ?= .env
 
 RELEASE_VERSION := $(shell tr -d '\r\n' < VERSION)
 PACKAGE ?= dist/gmail-offline-backup-$(RELEASE_VERSION).zip
@@ -38,10 +39,12 @@ CLASP_PROJECT_FLAGS = $(CLASP_ACCOUNT_FLAGS) -P "$(CLASP_PROJECT_PATH)"
 	diagnose-drive benchmark-compression benchmark-drive wait plan-and-wait \
 	s3-status s3-configure s3-probe s3-clear s3-open-settings \
 	apply-and-wait versions version deployments deploy redeploy undeploy apis \
-	enable-api disable-api open-api-console open-credentials mcp
+	enable-api disable-api open-api-console open-credentials mcp \
+	external-config-check external-locate-blocked external-fetch-check external-select-download \
+	external-local-check external-r2-probe external-export-one external-upload-local
 
 help: ## Show every supported command and configurable variable.
-	@awk 'BEGIN {FS = ":.*## "; printf "Gmail Offline Backup command surface\n\n"} /^[a-zA-Z0-9_.-]+:.*## / {printf "  %-24s %s\n", $$1, $$2} END {printf "\nCommon variables: SCRIPT_ID, SAMPLE_SIZE, PHASE, TIMEOUT_SECONDS, POLL_SECONDS,\n  FUNCTION, PARAMS, PARAMS_FILE, CLASP_USER, CLASP_AUTH, VERSION_NUMBER,\n  DEPLOYMENT_ID, DESCRIPTION, API, CONFIRM, PACKAGE.\n"}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "; printf "Gmail Offline Backup command surface\n\n"} /^[a-zA-Z0-9_.-]+:.*## / {printf "  %-24s %s\n", $$1, $$2} END {printf "\nCommon variables: SCRIPT_ID, SAMPLE_SIZE, PHASE, TIMEOUT_SECONDS, POLL_SECONDS,\n  FUNCTION, PARAMS, PARAMS_FILE, CLASP_USER, CLASP_AUTH, VERSION_NUMBER,\n  DEPLOYMENT_ID, DESCRIPTION, API, CONFIRM, PACKAGE, EXTERNAL_ENV.\n"}' $(MAKEFILE_LIST)
 
 tools: ## Check the local tools required for development and Apps Script operations.
 	@command -v "$(NODE)" >/dev/null || { echo "Missing Node.js (>=18)." >&2; exit 1; }
@@ -247,3 +250,30 @@ open-credentials: config-check ## Open credential setup for the bound project's 
 
 mcp: config-check ## Start clasp's Apps Script MCP server until interrupted.
 	@"$(CLASP)" $(CLASP_PROJECT_FLAGS) mcp
+
+external-config-check: ## Validate ignored EXTERNAL_ENV without printing secret values.
+	@EXTERNAL_ENV="$(EXTERNAL_ENV)" "$(NODE)" scripts/external-r2.js config-check
+
+external-locate-blocked: ## Read the Drive checkpoint and select the blocked Gmail message in ignored EXTERNAL_ENV.
+	@EXTERNAL_ENV="$(EXTERNAL_ENV)" "$(NODE)" scripts/external-r2.js locate-blocked
+
+external-fetch-check: ## Fetch selected Gmail RAW outside Apps Script and print only integrity metadata.
+	@EXTERNAL_ENV="$(EXTERNAL_ENV)" "$(NODE)" scripts/external-r2.js fetch-check
+
+external-select-download: ## Select exactly one recent browser-downloaded EML in ignored EXTERNAL_ENV.
+	@EXTERNAL_ENV="$(EXTERNAL_ENV)" "$(NODE)" scripts/external-r2.js select-download
+
+external-local-check: ## Validate and hash the selected local EML without printing its path or content.
+	@EXTERNAL_ENV="$(EXTERNAL_ENV)" "$(NODE)" scripts/external-r2.js local-check
+
+external-r2-probe: ## Write/read/delete an isolated R2 probe; requires CONFIRM=external-r2-probe.
+	@test "$(CONFIRM)" = "external-r2-probe" || { echo "Refusing. Re-run with CONFIRM=external-r2-probe." >&2; exit 2; }
+	@EXTERNAL_ENV="$(EXTERNAL_ENV)" CONFIRM="$(CONFIRM)" "$(NODE)" scripts/external-r2.js probe-r2
+
+external-export-one: ## Fetch selected Gmail RAW outside Apps Script and conditionally write one R2 .eml; requires confirmation.
+	@test "$(CONFIRM)" = "external-export-one" || { echo "Refusing. Re-run with CONFIRM=external-export-one." >&2; exit 2; }
+	@EXTERNAL_ENV="$(EXTERNAL_ENV)" CONFIRM="$(CONFIRM)" "$(NODE)" scripts/external-r2.js export-one
+
+external-upload-local: ## Conditionally write the selected local EML to R2; requires CONFIRM=external-upload-local.
+	@test "$(CONFIRM)" = "external-upload-local" || { echo "Refusing. Re-run with CONFIRM=external-upload-local." >&2; exit 2; }
+	@EXTERNAL_ENV="$(EXTERNAL_ENV)" CONFIRM="$(CONFIRM)" "$(NODE)" scripts/external-r2.js upload-local

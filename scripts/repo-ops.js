@@ -157,9 +157,11 @@ function validateSkill() {
 function shouldSkip(relativePath, directory) {
   const parts = relativePath.split(path.sep);
   const first = parts[0];
-  if (directory && ['.git', '.vscode', 'node_modules', 'dist'].includes(first)) return true;
+  if (directory && ['.git', '.vscode', '.credentials', 'credentials', 'node_modules', 'dist'].includes(first)) return true;
   if (directory && /^\.clasp-live-compare\./.test(first)) return true;
-  if (!directory && ['.clasp.json', '.DS_Store'].includes(relativePath)) return true;
+  if (!directory && ['.clasp.json', '.clasprc.json', '.env', '.DS_Store'].includes(relativePath)) return true;
+  if (!directory && /^\.env\./.test(relativePath) && relativePath !== '.env.example') return true;
+  if (!directory && /^credentials.*\.json$/i.test(relativePath)) return true;
   return false;
 }
 

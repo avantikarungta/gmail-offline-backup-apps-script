@@ -103,6 +103,22 @@ Prefer `PARAMS_FILE` for complex JSON, but never use it for S3 secret material;
 the wrapper ultimately forwards parameters to clasp. Add a named target when a
 function becomes a stable operation.
 
+For a one-message oversized Gmail RAW proof outside Apps Script, use ignored
+`.env` through `make external-config-check`, `make external-locate-blocked`,
+`make external-fetch-check`,
+`make external-r2-probe CONFIRM=external-r2-probe`, and
+`make external-export-one CONFIRM=external-export-one`. This bridge reuses
+the clasp OAuth grant without copying tokens, writes an uncompressed `.eml`
+under an isolated R2 prefix, and does not advance Apps Script state or its
+catalog. It is not a full migration or a replacement for PLAN/APPLY.
+
+If direct Gmail REST access reports `accessNotConfigured`, use the signed-in
+Gmail **Download message** action for the selected checkpoint entry, then run
+`make external-select-download`, `make external-local-check`, and
+`make external-upload-local CONFIRM=external-upload-local`. Selection requires
+exactly one recent `.eml`; command output never includes its name, path, or
+content.
+
 ## Monitoring And Logs
 
 ```sh

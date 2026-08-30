@@ -150,6 +150,35 @@ bucket, or prefix requires a fresh archive. Rotate credentials by staging the
 new values in Project Settings and rerunning `make s3-configure`; the binding
 does not change, but the real probe should be rerun before resuming.
 
+### External oversized-message R2 proof
+
+An R2 destination inside Apps Script does not fix a Gmail RAW response that is
+itself too large for Apps Script. Use the local proof bridge only for the
+checkpointed oversized message:
+
+1. Copy `.env.example` to ignored `.env` and set its mode to `0600`.
+2. Keep `CLASP_AUTH_FILE` pointed at the authorization created by
+   `make login-project`; never copy OAuth tokens into `.env`.
+3. Set an isolated R2 prefix and a credential with read, create, HEAD, and
+   delete permissions for that prefix.
+4. Run `make external-locate-blocked` to read `status.json` and the immutable
+   queue segment, then store only the selected Gmail ID in `.env`.
+   If the clasp OAuth client lacks Drive file authorization, use the signed-in
+   Drive UI to select that exact checkpointed entry instead.
+5. Run `make external-fetch-check` to fetch and hash the selected RAW response
+   in memory without writing it anywhere. If the clasp OAuth client reports
+   `accessNotConfigured`, use Gmail's signed-in **Download message** action,
+   then run `make external-select-download` and `make external-local-check`.
+6. Run the confirmed R2 probe, then either the direct `external-export-one`
+   target or `make external-upload-local CONFIRM=external-upload-local` for the
+   selected browser download.
+
+The export uses create-only semantics and verifies the stored byte length and
+raw SHA-256. A matching existing object is treated as a replay; a mismatch is
+never overwritten. This proof does not advance Apps Script state or publish a
+catalog record. Preserve the partial Drive archive until a full migration or
+new-archive design has been validated.
+
 ### S3 precondition or conflict failure
 
 Do not manually overwrite the named object. The in-flight checkpoint remains

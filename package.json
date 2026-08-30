@@ -4,7 +4,7 @@
   "private": true,
   "description": "Read-only, resumable Gmail raw-message backup for Google Apps Script",
   "scripts": {
-    "test": "node tests/run-tests.js && node tests/run-tooling-tests.js"
+    "test": "node tests/run-tests.js && node tests/run-tooling-tests.js && node tests/run-external-r2-tests.js"
   },
   "engines": {
     "node": ">=18"

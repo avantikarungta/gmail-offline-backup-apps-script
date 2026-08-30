@@ -190,6 +190,13 @@ When adding a stable operation, add a documented Make target, classify its
 effect, route Apps Script calls through `scripts/clasp-ops.js`, add tests, and
 update `make help`, the repo-local skill, and operator documentation.
 
+The external oversized-message proof is intentionally separate from Apps
+Script state. Its commands read ignored `.env`, reuse clasp OAuth without
+printing tokens, write only under an isolated R2 prefix, and never imply that
+the Apps Script queue/catalog has advanced. Do not promote it into a full
+backup path without implementing independent durable state, commits, catalog,
+verification, and cutover semantics.
+
 ## Git and Public Repository Hygiene
 
 The canonical remote is:
