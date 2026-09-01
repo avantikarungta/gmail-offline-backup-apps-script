@@ -150,8 +150,12 @@ const sandbox = {
     DigestAlgorithm: {SHA_256: 'SHA_256'},
     computeDigest: digestBytes,
     computeHmacSha256Signature(value, key) {
+      if (!Array.isArray(value) || !Array.isArray(key)) {
+        throw new TypeError('Apps Script requires matching byte-array HMAC arguments.');
+      }
       const normalizedKey = Buffer.from(Array.from(key || []).map(v => v < 0 ? v + 256 : v));
-      const out = crypto.createHmac('sha256', normalizedKey).update(String(value), 'utf8').digest();
+      const normalizedValue = Buffer.from(Array.from(value || []).map(v => v < 0 ? v + 256 : v));
+      const out = crypto.createHmac('sha256', normalizedKey).update(normalizedValue).digest();
       return Array.from(out).map(v => v > 127 ? v - 256 : v);
     },
     base64Encode(value) {

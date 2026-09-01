@@ -171,7 +171,8 @@ function s3HeaderValue_(value) {
 }
 
 function s3Hmac_(value, keyBytes) {
-  return normalizeByteArray_(utilitiesService_().computeHmacSha256Signature(String(value), keyBytes));
+  const valueBytes = utilitiesService_().newBlob(String(value)).getBytes();
+  return normalizeByteArray_(utilitiesService_().computeHmacSha256Signature(valueBytes, keyBytes));
 }
 
 function s3SigningKey_(secretAccessKey, dateStamp, region) {
