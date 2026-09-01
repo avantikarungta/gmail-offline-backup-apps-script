@@ -452,6 +452,39 @@ function listCanonical(folder) {
   assert.match(signedS3.headers.authorization, /^AWS4-HMAC-SHA256 Credential=ACCESS123\//);
   assert.strictEqual(signedS3.headers['if-none-match'], '*');
   assert.strictEqual(signedS3.headers['x-amz-security-token'], 'temporary-token');
+  const capturedHeadRequests = [];
+  const s3HeadRuntime = sandbox.GmailBackupLibrary.createRuntime({services: {
+    urlFetch: {
+      fetch(url, options) {
+        capturedHeadRequests.push({url, options});
+        if (String(options.method).toLowerCase() === 'head') {
+          throw new TypeError('Apps Script UrlFetchApp does not support HEAD.');
+        }
+        return {
+          getResponseCode() { return 206; },
+          getAllHeaders() {
+            return {
+              'Content-Length': '1', 'Content-Range': 'bytes 0-0/1234',
+              ETag: '"ranged-etag"', 'Content-Type': 'message/rfc822',
+              'x-amz-meta-gb-probe': 'true',
+            };
+          },
+        };
+      },
+    },
+  }});
+  const rangedHead = sandbox.GmailBackupLibrary.withRuntime(s3HeadRuntime, function () {
+    return new sandbox.S3ObjectClient_(
+      {bucket: 'archive-bucket', endpoint: 'https://example.r2.cloudflarestorage.com', region: 'auto', addressingStyle: 'PATH'},
+      {accessKeyId: 'ACCESS123', secretAccessKey: 'secret-value', sessionToken: ''}
+    ).head('prefix/message.eml');
+  });
+  assert.strictEqual(capturedHeadRequests.length, 1);
+  assert.strictEqual(capturedHeadRequests[0].options.method, 'get');
+  assert.strictEqual(capturedHeadRequests[0].options.headers.range, 'bytes=0-0');
+  assert.strictEqual(rangedHead.size, 1234);
+  assert.strictEqual(rangedHead.etag, '"ranged-etag"');
+  assert.strictEqual(rangedHead.metadata['gb-probe'], 'true');
   const parsedS3List = sandbox.parseS3ListXml_(
     '<ListBucketResult><IsTruncated>true</IsTruncated>' +
     '<NextContinuationToken>next&amp;token</NextContinuationToken>' +

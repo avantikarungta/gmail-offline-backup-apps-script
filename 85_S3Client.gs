@@ -316,19 +316,39 @@ S3ObjectClient_.prototype.request = function (operation, acceptedStatuses) {
 };
 
 S3ObjectClient_.prototype.head = function (key) {
-  const result = this.request({method: 'HEAD', key: key, label: 'HEAD'}, [200, 404]);
+  const normalizedKey = normalizeS3Key_(key);
+  const result = this.request({
+    method: 'GET', key: key, label: 'HEAD', headers: {range: 'bytes=0-0'},
+  }, [200, 206, 404, 416]);
   if (result.status === 404) return null;
-  return s3HeadFromHeaders_(normalizeS3Key_(key), result.headers);
+  if (result.status === 416) {
+    if (s3ContentRangeSize_(result.headers['content-range']) !== 0) {
+      throw new Error('S3 ranged metadata request was not satisfiable for a non-empty object.');
+    }
+    const empty = this.request({method: 'GET', key: key, label: 'HEAD_EMPTY'}, [200, 404]);
+    if (empty.status === 404) return null;
+    return s3HeadFromHeaders_(normalizedKey, empty.headers);
+  }
+  if (result.status === 200 && Number(result.headers['content-length'] || 0) > 1) {
+    throw new Error('S3 endpoint ignored the bounded Range request used for metadata reads.');
+  }
+  return s3HeadFromHeaders_(normalizedKey, result.headers);
 };
+
+function s3ContentRangeSize_(value) {
+  const match = /\/(\d+)\s*$/.exec(String(value || ''));
+  return match ? Number(match[1]) : null;
+}
 
 function s3HeadFromHeaders_(key, headers) {
   const metadata = {};
   Object.keys(headers || {}).forEach(function (name) {
     if (name.indexOf('x-amz-meta-') === 0) metadata[name.slice(11)] = headers[name];
   });
+  const rangedSize = s3ContentRangeSize_(headers['content-range']);
   return {
     key: key,
-    size: Number(headers['content-length'] || 0),
+    size: rangedSize === null ? Number(headers['content-length'] || 0) : rangedSize,
     etag: String(headers.etag || ''),
     contentType: String(headers['content-type'] || 'application/octet-stream'),
     lastModified: headers['last-modified'] || null,
