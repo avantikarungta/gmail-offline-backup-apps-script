@@ -1339,6 +1339,38 @@ function listCanonical(folder) {
     ['new01', 'same01']
   );
 
+  // An S3 precondition conflict must reload and re-merge the newer shard so a
+  // concurrent set-union contribution is preserved instead of overwritten.
+  const conflictShardFolder = new MockFolder('conflict-plan-shards');
+  const conflictShardFile = conflictShardFolder.createFile(
+    'shard-02.json',
+    JSON.stringify([{id: 'same02', threadId: 'thread-same02'}]),
+    'text/plain'
+  );
+  const originalConflictSetContent = conflictShardFile.setContent.bind(conflictShardFile);
+  let injectShardConflict = true;
+  conflictShardFile.setContent = function (content) {
+    if (injectShardConflict) {
+      injectShardConflict = false;
+      this.bytes = Array.from(Buffer.from(JSON.stringify([
+        {id: 'same02', threadId: 'thread-same02'},
+        {id: 'concurrent02', threadId: 'thread-concurrent02'},
+      ])));
+      const error = new Error('injected S3 precondition conflict');
+      error.code = 'S3_PRECONDITION_FAILED';
+      throw error;
+    }
+    return originalConflictSetContent(content);
+  };
+  sandbox.flushPlanShardBuffer_(conflictShardFolder, {
+    '02': [{id: 'new02', threadId: 'thread-new02'}],
+  });
+  assert.strictEqual(injectShardConflict, false);
+  assert.deepStrictEqual(
+    JSON.parse(conflictShardFile.getBlob().getDataAsString()).map(entry => entry.id),
+    ['concurrent02', 'new02', 'same02']
+  );
+
   // A scan crash after journal creation but before shard/state advancement
   // must replay the durable journal without issuing the Gmail list call again.
   const journalRoot = new MockFolder('journal-root');

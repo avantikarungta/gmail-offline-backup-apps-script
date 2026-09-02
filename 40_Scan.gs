@@ -192,31 +192,43 @@ function flushPlanShardBuffer_(folder, bufferByShard) {
   const existingFiles = listFilesByName_(folder);
   Object.keys(bufferByShard).sort().forEach(function (shard) {
     const name = 'shard-' + shard + '.json';
-    const file = existingFiles[name] || null;
-    const existing = file ? readJsonFile_(file, []) : [];
-    const byId = {};
-    let changed = !file;
+    let conflictRetries = 0;
+    while (true) {
+      const file = conflictRetries === 0 ? (existingFiles[name] || null) : firstFileByName_(folder, name);
+      const existing = file ? readJsonFile_(file, []) : [];
+      const byId = {};
+      let changed = !file;
 
-    existing.forEach(function (entry) {
-      if (entry && entry.id) byId[entry.id] = {id: entry.id, threadId: entry.threadId || ''};
-    });
-    bufferByShard[shard].forEach(function (entry) {
-      if (!entry || !entry.id) return;
-      const next = {id: entry.id, threadId: entry.threadId || ''};
-      const prior = byId[entry.id];
-      if (!prior || prior.threadId !== next.threadId) changed = true;
-      byId[entry.id] = next;
-    });
+      existing.forEach(function (entry) {
+        if (entry && entry.id) byId[entry.id] = {id: entry.id, threadId: entry.threadId || ''};
+      });
+      bufferByShard[shard].forEach(function (entry) {
+        if (!entry || !entry.id) return;
+        const next = {id: entry.id, threadId: entry.threadId || ''};
+        const prior = byId[entry.id];
+        if (!prior || prior.threadId !== next.threadId) changed = true;
+        byId[entry.id] = next;
+      });
 
-    // The second scan pass is normally almost identical to the first. Avoid a
-    // Drive setContent() mutation for every touched shard when the set union
-    // and thread mappings did not change.
-    if (!changed) return;
-    const merged = Object.keys(byId).sort().map(function (id) { return byId[id]; });
-    if (file) {
-      file.setContent(JSON.stringify(merged));
-    } else {
-      existingFiles[name] = folder.createFile(name, JSON.stringify(merged), 'text/plain');
+      // The second scan pass is normally almost identical to the first. Avoid a
+      // storage mutation for every touched shard when the set union and thread
+      // mappings did not change.
+      if (!changed) return;
+      const merged = Object.keys(byId).sort().map(function (id) { return byId[id]; });
+      try {
+        if (file) {
+          file.setContent(JSON.stringify(merged));
+        } else {
+          existingFiles[name] = folder.createFile(name, JSON.stringify(merged), 'text/plain');
+        }
+        return;
+      } catch (error) {
+        if (!error || error.code !== 'S3_PRECONDITION_FAILED' || conflictRetries >= 2) throw error;
+        conflictRetries++;
+        logger_().warn(JSON.stringify({
+          event: 'SCAN_SHARD_CONFLICT_RELOAD', shard: shard, attempt: conflictRetries,
+        }));
+      }
     }
   });
 }
