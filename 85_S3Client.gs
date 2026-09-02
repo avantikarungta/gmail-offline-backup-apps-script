@@ -318,14 +318,17 @@ S3ObjectClient_.prototype.request = function (operation, acceptedStatuses) {
 S3ObjectClient_.prototype.head = function (key) {
   const normalizedKey = normalizeS3Key_(key);
   const result = this.request({
-    method: 'GET', key: key, label: 'HEAD', headers: {range: 'bytes=0-0'},
+    method: 'GET', key: key, label: 'HEAD',
+    headers: {range: 'bytes=0-0', 'accept-encoding': 'identity'},
   }, [200, 206, 404, 416]);
   if (result.status === 404) return null;
   if (result.status === 416) {
     if (s3ContentRangeSize_(result.headers['content-range']) !== 0) {
       throw new Error('S3 ranged metadata request was not satisfiable for a non-empty object.');
     }
-    const empty = this.request({method: 'GET', key: key, label: 'HEAD_EMPTY'}, [200, 404]);
+    const empty = this.request({
+      method: 'GET', key: key, label: 'HEAD_EMPTY', headers: {'accept-encoding': 'identity'},
+    }, [200, 404]);
     if (empty.status === 404) return null;
     return s3HeadFromHeaders_(normalizedKey, empty.headers);
   }
@@ -358,7 +361,14 @@ function s3HeadFromHeaders_(key, headers) {
 }
 
 S3ObjectClient_.prototype.get = function (key) {
-  const result = this.request({method: 'GET', key: key, label: 'GET'}, [200, 404]);
+  // Some S3-compatible CDNs dynamically compress text objects and return a
+  // weak ETag for that representation. Besides changing the transferred byte
+  // stream, a weak ETag can never satisfy a later strong If-Match. Request the
+  // stored representation so integrity checks and conditional writes use the
+  // canonical bytes and strong entity tag.
+  const result = this.request({
+    method: 'GET', key: key, label: 'GET', headers: {'accept-encoding': 'identity'},
+  }, [200, 404]);
   if (result.status === 404) return null;
   const head = s3HeadFromHeaders_(normalizeS3Key_(key), result.headers);
   head.bytes = s3ResponseBytes_(result.response);

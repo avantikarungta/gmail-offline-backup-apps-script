@@ -482,9 +482,39 @@ function listCanonical(folder) {
   assert.strictEqual(capturedHeadRequests.length, 1);
   assert.strictEqual(capturedHeadRequests[0].options.method, 'get');
   assert.strictEqual(capturedHeadRequests[0].options.headers.range, 'bytes=0-0');
+  assert.strictEqual(capturedHeadRequests[0].options.headers['accept-encoding'], 'identity');
   assert.strictEqual(rangedHead.size, 1234);
   assert.strictEqual(rangedHead.etag, '"ranged-etag"');
   assert.strictEqual(rangedHead.metadata['gb-probe'], 'true');
+  const capturedGetRequests = [];
+  const s3GetRuntime = sandbox.GmailBackupLibrary.createRuntime({services: {
+    urlFetch: {
+      fetch(url, options) {
+        capturedGetRequests.push({url, options});
+        const identity = options.headers['accept-encoding'] === 'identity';
+        return {
+          getResponseCode() { return 200; },
+          getAllHeaders() {
+            return {
+              'Content-Length': '3', ETag: identity ? '"strong-etag"' : 'W/"weak-etag"',
+              'Content-Type': 'application/json',
+            };
+          },
+          getBlob() { return new MockBlob([91, 93, 10], 'application/json', 'object.json'); },
+        };
+      },
+    },
+  }});
+  const identityObject = sandbox.GmailBackupLibrary.withRuntime(s3GetRuntime, function () {
+    return new sandbox.S3ObjectClient_(
+      {bucket: 'archive-bucket', endpoint: 'https://example.r2.cloudflarestorage.com', region: 'auto', addressingStyle: 'PATH'},
+      {accessKeyId: 'ACCESS123', secretAccessKey: 'secret-value', sessionToken: ''}
+    ).get('prefix/object.json');
+  });
+  assert.strictEqual(capturedGetRequests.length, 1);
+  assert.strictEqual(capturedGetRequests[0].options.headers['accept-encoding'], 'identity');
+  assert.strictEqual(identityObject.etag, '"strong-etag"');
+  assert.deepStrictEqual(Array.from(identityObject.bytes), [91, 93, 10]);
   const parsedS3List = sandbox.parseS3ListXml_(
     '<ListBucketResult><IsTruncated>true</IsTruncated>' +
     '<NextContinuationToken>next&amp;token</NextContinuationToken>' +
