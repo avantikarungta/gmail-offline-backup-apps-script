@@ -555,6 +555,45 @@ function buildExternalRepairCommit(context, integrity, now) {
   };
 }
 
+function buildExternalIntegrityAttestation(context, integrity, now) {
+  return {
+    schemaVersion: 1,
+    kind: 'EXTERNAL_S3_FULL_SHA256_V1',
+    planId: context.checkpoint.planId,
+    queueSegment: context.checkpoint.segmentIndex,
+    start: context.checkpoint.start,
+    endExclusive: context.checkpoint.endExclusive,
+    messageId: context.entry.id,
+    storageFileId: context.canonicalKey,
+    archiveEncoding: 'EML',
+    rawBytes: integrity.rawBytes,
+    rawSha256: integrity.rawSha256,
+    storedBytes: integrity.rawBytes,
+    storedSha256: integrity.rawSha256,
+    verifiedAt: (now || new Date()).toISOString(),
+  };
+}
+
+function validateExternalIntegrityAttestation(attestation, context, integrity) {
+  if (!attestation || Number(attestation.schemaVersion) !== 1 ||
+      attestation.kind !== 'EXTERNAL_S3_FULL_SHA256_V1' ||
+      attestation.planId !== context.checkpoint.planId ||
+      Number(attestation.queueSegment) !== context.checkpoint.segmentIndex ||
+      Number(attestation.start) !== context.checkpoint.start ||
+      Number(attestation.endExclusive) !== context.checkpoint.endExclusive ||
+      attestation.messageId !== context.entry.id ||
+      attestation.storageFileId !== context.canonicalKey ||
+      attestation.archiveEncoding !== 'EML' ||
+      Number(attestation.rawBytes) !== integrity.rawBytes ||
+      Number(attestation.storedBytes) !== integrity.rawBytes ||
+      attestation.rawSha256 !== integrity.rawSha256 ||
+      attestation.storedSha256 !== integrity.rawSha256 ||
+      !Number.isFinite(Date.parse(attestation.verifiedAt || ''))) {
+    throw new Error('Existing integrity attestation does not match the paused queue entry and canonical R2 object.');
+  }
+  return attestation;
+}
+
 function validateExternalRepairCommit(commit, context, integrity) {
   const record = commit && Array.isArray(commit.records) && commit.records[0];
   const summary = commit && commit.summary;
@@ -594,7 +633,9 @@ async function blockedS3Context(profile) {
   const canonicalKey = `${rootPrefix}data/shard-${archiveShard}/${messageId}.eml`;
   const commitKey = `${rootPrefix}plans/${checkpoint.planId}/commits/segment-${String(checkpoint.segmentIndex).padStart(8, '0')}/` +
     applyCommitFileName(checkpoint.start, checkpoint.endExclusive);
-  return {status, checkpoint, entry, archiveShard, canonicalKey, commitKey};
+  const attestationKey = `${rootPrefix}plans/${checkpoint.planId}/integrity-attestations/segment-${String(checkpoint.segmentIndex).padStart(8, '0')}/` +
+    applyCommitFileName(checkpoint.start, checkpoint.endExclusive);
+  return {status, checkpoint, entry, archiveShard, canonicalKey, commitKey, attestationKey};
 }
 
 async function validateCanonicalR2Object(profile, context) {
@@ -620,6 +661,7 @@ async function inspectBlockedS3() {
   const context = await blockedS3Context(profile);
   const integrity = await validateCanonicalR2Object(profile, context);
   const commitExists = Boolean(await headObject(profile, context.commitKey));
+  const attestationExists = Boolean(await headObject(profile, context.attestationKey));
   return {
     ok: true,
     phase: context.status.phase,
@@ -633,6 +675,7 @@ async function inspectBlockedS3() {
     canonicalObjectValid: Boolean(integrity),
     rawBytes: integrity ? integrity.rawBytes : null,
     rawSha256Prefix: integrity ? integrity.rawSha256.slice(0, 16) : null,
+    attestationPresent: attestationExists,
     commitPresent: commitExists,
   };
 }
@@ -687,6 +730,31 @@ async function publishExternalRepairCommit(profile, context, integrity) {
   return {created, replayed: !created};
 }
 
+async function publishExternalIntegrityAttestation(profile, context, integrity) {
+  const expected = buildExternalIntegrityAttestation(context, integrity);
+  const existing = await headObject(profile, context.attestationKey);
+  let created = false;
+  if (existing) {
+    validateExternalIntegrityAttestation(
+      await readJsonObject(profile, context.attestationKey, 'existing integrity attestation'), context, integrity
+    );
+  } else {
+    const response = await s3Request(profile, {
+      method: 'PUT', key: context.attestationKey,
+      body: Buffer.from(JSON.stringify(expected), 'utf8'),
+      headers: {'content-type': 'text/plain', 'if-none-match': '*'},
+    });
+    if (![200, 201, 204, 412].includes(response.status)) {
+      throw new Error(`R2 conditional attestation PUT failed (${response.status}).`);
+    }
+    created = response.status !== 412;
+    validateExternalIntegrityAttestation(
+      await readJsonObject(profile, context.attestationKey, 'published integrity attestation'), context, integrity
+    );
+  }
+  return {created, replayed: !created};
+}
+
 async function repairBlockedS3() {
   if (String(process.env.CONFIRM || '') !== 'external-repair-s3-blocked') {
     throw new Error('Refusing R2 commit write. Re-run with CONFIRM=external-repair-s3-blocked.');
@@ -697,6 +765,7 @@ async function repairBlockedS3() {
   if (!integrity) {
     throw new Error('The paused message has no canonical R2 object to recover; no commit was written.');
   }
+  const attested = await publishExternalIntegrityAttestation(profile, context, integrity);
   const published = await publishExternalRepairCommit(profile, context, integrity);
   return {
     ok: true,
@@ -710,6 +779,8 @@ async function repairBlockedS3() {
     commitFingerprint: fingerprint(context.commitKey),
     rawBytes: integrity.rawBytes,
     rawSha256Prefix: integrity.rawSha256.slice(0, 16),
+    attestationCreated: attested.created,
+    attestationReplayed: attested.replayed,
     created: published.created,
     replayed: published.replayed,
   };
@@ -750,6 +821,7 @@ async function importBlockedS3() {
       actualIntegrity.rawSha256 !== expectedIntegrity.rawSha256) {
     throw new Error('Canonical R2 object does not match the selected local EML; refusing to publish a commit.');
   }
+  const attested = await publishExternalIntegrityAttestation(profile, context, actualIntegrity);
   const published = await publishExternalRepairCommit(profile, context, actualIntegrity);
   return {
     ok: true,
@@ -766,6 +838,8 @@ async function importBlockedS3() {
     rawSha256Prefix: actualIntegrity.rawSha256.slice(0, 16),
     canonicalCreated,
     canonicalReplayed: !canonicalCreated,
+    attestationCreated: attested.created,
+    attestationReplayed: attested.replayed,
     commitCreated: published.created,
     commitReplayed: published.replayed,
   };
@@ -952,6 +1026,7 @@ module.exports = {
   base64UrlToBuffer,
   buildSignedS3Request,
   buildExternalRepairCommit,
+  buildExternalIntegrityAttestation,
   appsScriptArchiveMarker,
   canonicalPath,
   fingerprint,
@@ -965,6 +1040,7 @@ module.exports = {
   selfTest,
   updateEnvFile,
   validateExternalRepairCommit,
+  validateExternalIntegrityAttestation,
   validatePausedSingleMessageCheckpoint,
   validateEmlBytes,
 };

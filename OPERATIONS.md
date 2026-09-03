@@ -193,7 +193,10 @@ Set `R2_KEY_PREFIX` to the already-bound production prefix and
 read-only. Repair accepts only a `PAUSED`/`APPLYING`, exact one-message
 checkpoint; it checks the immutable queue entry, content type, Apps Script
 integrity marker, byte count, and full SHA-256 before conditionally creating
-the deterministic commit. It never fetches Gmail, overwrites an object, edits
+an immutable full-hash attestation and the deterministic commit. Apps Script
+uses that attestation above its configured replay-hash heap limit and still
+checks the canonical object's metadata marker, type, and size. Repair never
+fetches Gmail, overwrites an object, edits
 Script Properties, or advances the cursor. On resume, ordinary replay
 validation merges the commit into the catalog and advances state.
 
@@ -208,7 +211,8 @@ make external-import-s3-blocked CONFIRM=external-import-s3-blocked
 
 The importer re-reads the paused checkpoint and requires its selected Gmail ID
 to match, conditionally creates the canonical `.eml` with the native Apps
-Script marker, re-downloads and hashes it, and only then publishes the commit.
+Script marker, re-downloads and hashes it, and only then publishes the
+attestation and commit.
 It is replay-safe if interrupted on either side of the object/commit boundary.
 
 ### S3 precondition or conflict failure
@@ -216,7 +220,9 @@ It is replay-safe if interrupted on either side of the object/commit boundary.
 Do not manually overwrite the named object. The in-flight checkpoint remains
 durable. Inspect the execution, run `make s3-probe`, then `make resume` or one
 `make worker`. A replay lists and hashes the canonical object before deciding
-whether to reuse or quarantine it.
+whether to reuse or quarantine it. Above `S3_REPLAY_FULL_HASH_MAX_BYTES`, it
+requires the external full-hash attestation and uses bounded metadata
+validation so Apps Script does not exceed its V8 heap.
 
 ## Files not to delete during an active run
 

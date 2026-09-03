@@ -27,6 +27,10 @@ Use provider-neutral logical keys for canonical messages, commits, catalog pages
 - Redact authorization headers, signed URLs, security tokens, access keys, message data, and endpoints containing credentials from logs.
 - Run a bounded capability probe because S3-compatible products differ in conditional requests, multipart behavior, checksums, listing consistency, and metadata handling.
 - Account for Apps Script `UrlFetchApp` request and runtime limits; multipart/resumable paths must be sliceable across executions.
+- Do not full-read an oversized S3 object during Apps Script replay. Require a
+  create-only external full-hash attestation produced only after a complete GET
+  matches the canonical marker, byte count, and SHA-256; then recheck that
+  attestation and bounded object metadata before catalog/cursor advancement.
 
 ## Configuration And Credentials
 

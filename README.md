@@ -721,7 +721,10 @@ before publishing its APPLY commit. With the worker checkpoint-safely paused,
 `make external-inspect-s3-blocked` verifies the exact queue entry and complete
 object integrity. `make external-repair-s3-blocked
 CONFIRM=external-repair-s3-blocked` then uses create-only semantics to publish
-only that deterministic one-message commit. Normal Apps Script replay remains
+an immutable full-hash attestation and that deterministic one-message commit.
+Above the configured V8 replay-hash limit, Apps Script validates the
+attestation plus the canonical R2 object's marker, type, and size without
+loading all message bytes back into its heap. Normal replay remains
 responsible for catalog merge and cursor advancement after `make resume`.
 If inspection finds no canonical object, `make external-select-s3-blocked`
 freezes the selected ID from the current queue in ignored `.env`; after that

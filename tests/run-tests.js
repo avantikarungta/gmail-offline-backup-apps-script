@@ -439,6 +439,7 @@ function listCanonical(folder) {
   assert.strictEqual(sandbox.__BACKUP_CONFIG.ARCHIVE_ENCODING, 'ZIP');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_MAX_PARALLEL_BYTES, 8 * 1024 * 1024);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_APPLY_BATCH_SIZE, 1);
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_REPLAY_FULL_HASH_MAX_BYTES, 8 * 1024 * 1024);
   assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.14');
 
   // SigV4 requests never expose credentials in URLs and sign all required
@@ -1184,7 +1185,7 @@ function listCanonical(folder) {
   const s3ApplyRuntime = sandbox.GmailBackupLibrary.createRuntime({config: {
     STORAGE_BACKEND: 'S3',
     S3_APPLY_BATCH_SIZE: 1,
-  }});
+  }, services: {drive: sandbox.DriveApp}});
   sandbox.GmailBackupLibrary.withRuntime(s3ApplyRuntime, function () {
     assert.strictEqual(sandbox.applyBatchSizeLimit_(), 1);
     assert.strictEqual(sandbox.applyReplayBatchEnd_(5, 25), 6);
@@ -1352,6 +1353,81 @@ function listCanonical(folder) {
     durationMs: 100,
   };
   assert.strictEqual(sandbox.validateCommittedFiles_(repairedCommit, layout).ok, true);
+
+  // Oversized S3 replay must use a separately persisted full-hash attestation
+  // and metadata marker instead of reloading the object into the V8 heap.
+  const attestedId = 'oversize3e';
+  const attestedShard = sandbox.shardForId_(attestedId);
+  const attestedFolder = data.createFolder('shard-' + attestedShard);
+  const attestedFile = attestedFolder.createFile(
+    new MockBlob(Buffer.from('not-loaded'), 'message/rfc822', attestedId + '.eml')
+  );
+  const attestedBytes = 9 * 1024 * 1024;
+  const attestedSha = 'a'.repeat(64);
+  attestedFile.getSize = function () { return attestedBytes; };
+  attestedFile.setDescription(sandbox.archiveIntegrityDescription_({
+    archiveEncoding: 'EML', rawByteLength: attestedBytes, rawSha256: attestedSha,
+  }));
+  attestedFile.getBlob = function () { throw new Error('oversized object content must not be loaded'); };
+  const attestedPlan = plans.createFolder('attestation-plan');
+  const attestedRoot = attestedPlan.createFolder('integrity-attestations');
+  const attestedSegment = attestedRoot.createFolder('segment-00000000');
+  const attestedRecord = {
+    id: attestedId,
+    archiveShard: attestedShard,
+    queueSegment: 0,
+    status: 'exported',
+    archiveEncoding: 'EML',
+    rawBytes: attestedBytes,
+    sha256: attestedSha,
+    storedBytes: attestedBytes,
+    storedSha256: attestedSha,
+    fileName: attestedId + '.eml',
+    mimeType: 'message/rfc822',
+    storageFileId: attestedFile.getId(),
+  };
+  const attestedCommit = {
+    schemaVersion: 2,
+    planId: 'attestation-plan',
+    queueSegment: 0,
+    start: 7,
+    endExclusive: 8,
+    summary: {processed: 1, exported: 1, gone: 0, rawBytes: attestedBytes, storedBytes: attestedBytes},
+    records: [attestedRecord],
+  };
+  const attestationFile = attestedSegment.createFile(
+    '00000007-00000008.json',
+    JSON.stringify({
+      schemaVersion: 1,
+      kind: 'EXTERNAL_S3_FULL_SHA256_V1',
+      planId: 'attestation-plan',
+      queueSegment: 0,
+      start: 7,
+      endExclusive: 8,
+      messageId: attestedId,
+      storageFileId: attestedFile.getId(),
+      archiveEncoding: 'EML',
+      rawBytes: attestedBytes,
+      rawSha256: attestedSha,
+      storedBytes: attestedBytes,
+      storedSha256: attestedSha,
+      verifiedAt: '2026-09-03T12:00:00.000Z',
+    }),
+    'text/plain'
+  );
+  sandbox.GmailBackupLibrary.withRuntime(s3ApplyRuntime, function () {
+    const validation = sandbox.validateCommittedFiles_(attestedCommit, layout);
+    assert.strictEqual(validation.ok, true, JSON.stringify(validation.failures));
+    assert.strictEqual(attestedRecord.integrityVerification.kind, 'EXTERNAL_S3_FULL_SHA256_V1');
+    const boundedRead = sandbox.readArchiveFileIntegrity_(attestedFile, attestedRecord, false);
+    assert.strictEqual(boundedRead.ok, true);
+    assert.strictEqual(boundedRead.method, 'externalFullHashAttestation+S3Metadata');
+    assert.strictEqual(boundedRead.rawIntegritySource, 'externalFullHashAttestation');
+    attestationFile.setTrashed(true);
+    const missing = sandbox.validateCommittedFiles_(attestedCommit, layout);
+    assert.strictEqual(missing.ok, false);
+    assert.strictEqual(missing.failures[0].reason, 'oversized-replay-attestation-missing');
+  });
 
   const applyState = {apply: sandbox.newApplyState_()};
   applyState.apply.total = 10;

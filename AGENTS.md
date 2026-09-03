@@ -202,8 +202,10 @@ exact `PAUSED` one-message checkpoint into the existing transaction only after
 validating the immutable queue, canonical key, Apps Script integrity marker,
 full stored bytes, and SHA-256. Its import variant requires the queue-selected
 Gmail ID and a locally validated browser download, uses create-only writes for
-both object and commit, and leaves catalog merge/cursor advancement to normal
-Apps Script replay. Never run it against an active checkpoint.
+the object, full-hash attestation, and commit, and leaves catalog merge/cursor
+advancement to normal Apps Script replay. Above the configured replay-hash heap
+limit, Apps Script must validate that attestation and the object metadata rather
+than load the full object. Never run recovery against an active checkpoint.
 
 ## Git and Public Repository Hygiene
 

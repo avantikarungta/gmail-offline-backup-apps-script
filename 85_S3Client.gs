@@ -50,6 +50,10 @@ function validateS3Configuration_() {
   if (!Number.isInteger(parallelBytes) || parallelBytes < 1024 * 1024 || parallelBytes > 48 * 1024 * 1024) {
     throw new Error('S3_MAX_PARALLEL_BYTES must be between 1 MiB and 48 MiB.');
   }
+  const replayHashBytes = Number(config.S3_REPLAY_FULL_HASH_MAX_BYTES);
+  if (!Number.isInteger(replayHashBytes) || replayHashBytes < 1024 * 1024 || replayHashBytes > 48 * 1024 * 1024) {
+    throw new Error('S3_REPLAY_FULL_HASH_MAX_BYTES must be between 1 MiB and 48 MiB.');
+  }
   const threshold = Number(config.S3_MULTIPART_THRESHOLD_BYTES);
   const partSize = Number(config.S3_MULTIPART_PART_BYTES);
   if (!Number.isInteger(partSize) || partSize < 5 * 1024 * 1024 || partSize > 32 * 1024 * 1024) {

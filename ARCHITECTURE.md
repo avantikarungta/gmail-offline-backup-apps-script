@@ -200,6 +200,10 @@ For each bounded queue range:
 - **Before file creation:** retry same range.
 - **After some files, before commit:** re-fetch and SHA-256-check existing files.
 - **After commit, before catalog:** validate files and replay commit.
+- **Oversized S3 replay:** a local recovery may publish a create-only,
+  full-object SHA-256 attestation before its commit. Above the V8 replay-hash
+  limit, Apps Script validates that immutable attestation plus the canonical
+  object's marker, type, and size instead of loading the full object into heap.
 - **During multi-shard catalog merge:** repeat ID-keyed merges safely.
 - **After catalog, before state advancement:** repeat merge, then advance once.
 

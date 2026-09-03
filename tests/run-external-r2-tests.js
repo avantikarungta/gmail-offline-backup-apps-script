@@ -61,6 +61,17 @@ assert.strictEqual(repairCommit.records[0].storageFileId, repairContext.canonica
 assert.throws(() => tool.validateExternalRepairCommit(
   Object.assign({}, repairCommit, {start: 4}), repairContext, repairIntegrity
 ), /does not match/);
+const repairAttestation = tool.buildExternalIntegrityAttestation(
+  repairContext, repairIntegrity, new Date('2026-09-03T12:00:00.000Z')
+);
+assert.strictEqual(
+  tool.validateExternalIntegrityAttestation(repairAttestation, repairContext, repairIntegrity),
+  repairAttestation
+);
+assert.strictEqual(repairAttestation.kind, 'EXTERNAL_S3_FULL_SHA256_V1');
+assert.throws(() => tool.validateExternalIntegrityAttestation(
+  Object.assign({}, repairAttestation, {storedSha256: 'b'.repeat(64)}), repairContext, repairIntegrity
+), /does not match/);
 
 const profile = {
   endpoint: new URL('https://account.r2.cloudflarestorage.com'),

@@ -685,7 +685,25 @@ function validateCommittedFiles_(commit, layout) {
         failures.push({id: record.id, reason: 'file-size-mismatch', actual: Number(file.getSize()), expected: expectedStoredBytes});
         return;
       }
+      if (String(file.getMimeType() || '') !== archiveMimeTypeForEncoding_(archiveEncodingForRecord_(record))) {
+        failures.push({id: record.id, reason: 'file-mime-type-mismatch'});
+        return;
+      }
       if (backupConfig_().VERIFY_RECOVERED_FILES) {
+        if (shouldUseExternalS3ReplayAttestation_(record)) {
+          const attested = validateExternalS3ReplayAttestation_(commit, record, file, layout);
+          if (!attested.ok) {
+            failures.push({id: record.id, reason: attested.reason, error: attested.error || null});
+            return;
+          }
+          record.integrityVerification = {
+            schemaVersion: 1,
+            kind: 'EXTERNAL_S3_FULL_SHA256_V1',
+            verifiedAt: attested.attestation.verifiedAt,
+            attestationFileId: attested.file.getId(),
+          };
+          return;
+        }
         const integrity = readArchiveFileIntegrity_(file, record, false);
         const expectedStoredSha256 = expectedStoredSha256ForRecord_(record);
         const storedMatches = integrity.ok && expectedStoredSha256 &&
@@ -711,6 +729,62 @@ function validateCommittedFiles_(commit, layout) {
     }
   });
   return {ok: failures.length === 0, failures: failures};
+}
+
+function shouldUseExternalS3ReplayAttestation_(record) {
+  return isS3StorageBackend_() && archiveEncodingForRecord_(record) === 'EML' &&
+    expectedStoredBytesForRecord_(record) > Number(backupConfig_().S3_REPLAY_FULL_HASH_MAX_BYTES);
+}
+
+function validateExternalS3ReplayAttestation_(commit, record, file, layout) {
+  try {
+    if (!commit || !record || !layout || !layout.plans ||
+        !Array.isArray(commit.records) || commit.records.length !== 1 ||
+        commit.queueSegment === undefined || commit.queueSegment === null ||
+        Number(commit.endExclusive) !== Number(commit.start) + 1) {
+      return {ok: false, reason: 'oversized-replay-attestation-range-invalid'};
+    }
+    const planFolder = findChildFolder_(layout.plans, String(commit.planId || ''));
+    const attestations = planFolder ? findChildFolder_(planFolder, 'integrity-attestations') : null;
+    const segmentName = 'segment-' + padNumber_(Number(commit.queueSegment), 8);
+    const segmentFolder = attestations ? findChildFolder_(attestations, segmentName) : null;
+    const name = commitFileName_(Number(commit.start), Number(commit.endExclusive));
+    const attestationFile = segmentFolder ? firstFileByName_(segmentFolder, name) : null;
+    if (!attestationFile) {
+      return {ok: false, reason: 'oversized-replay-attestation-missing'};
+    }
+    const attestation = readJsonFile_(attestationFile, null);
+    const rawBytes = Number(record.rawBytes);
+    const storedBytes = expectedStoredBytesForRecord_(record);
+    const rawSha256 = String(record.sha256 || '').toLowerCase();
+    const storedSha256 = String(expectedStoredSha256ForRecord_(record) || '').toLowerCase();
+    const marker = archiveIntegrityMarkerForFile_(file, null);
+    const matches = attestation && Number(attestation.schemaVersion) === 1 &&
+      attestation.kind === 'EXTERNAL_S3_FULL_SHA256_V1' &&
+      attestation.planId === commit.planId &&
+      Number(attestation.queueSegment) === Number(commit.queueSegment) &&
+      Number(attestation.start) === Number(commit.start) &&
+      Number(attestation.endExclusive) === Number(commit.endExclusive) &&
+      attestation.messageId === record.id &&
+      attestation.storageFileId === storageFileIdForRecord_(record) &&
+      attestation.archiveEncoding === 'EML' &&
+      Number(attestation.rawBytes) === rawBytes &&
+      Number(attestation.storedBytes) === storedBytes &&
+      String(attestation.rawSha256 || '').toLowerCase() === rawSha256 &&
+      String(attestation.storedSha256 || '').toLowerCase() === storedSha256 &&
+      Number.isFinite(Date.parse(attestation.verifiedAt || '')) &&
+      marker && marker.archiveEncoding === 'EML' &&
+      Number(marker.rawByteLength) === rawBytes && marker.rawSha256 === rawSha256 &&
+      storedBytes === rawBytes && storedSha256 === rawSha256;
+    if (!matches) return {ok: false, reason: 'oversized-replay-attestation-mismatch'};
+    return {ok: true, attestation: attestation, file: attestationFile};
+  } catch (error) {
+    return {
+      ok: false,
+      reason: 'oversized-replay-attestation-unavailable',
+      error: errorToString_(error),
+    };
+  }
 }
 
 function quarantineCheckpointFile_(rootFolder, file, planId, location, originalName) {

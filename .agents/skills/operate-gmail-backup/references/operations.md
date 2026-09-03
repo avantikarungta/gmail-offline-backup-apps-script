@@ -126,7 +126,9 @@ object, run `make external-repair-s3-blocked
 CONFIRM=external-repair-s3-blocked`. The command requires the ignored `.env`
 to identify the already-bound prefix and archive root name. It validates the
 paused state, immutable queue entry, Apps Script integrity metadata, complete
-object bytes, and SHA-256, then conditionally creates the missing commit. It
+object bytes, and SHA-256, then conditionally creates an immutable attestation
+and the missing commit. Oversized replay checks the attestation and object
+metadata without reloading all bytes into the Apps Script heap. It
 does not edit Script Properties or advance the cursor; resume lets ordinary
 replay do that transactionally.
 

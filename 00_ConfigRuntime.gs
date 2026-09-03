@@ -54,6 +54,10 @@ const BACKUP_CONFIG = Object.freeze({
   // Bound the number of raw Gmail responses retained by one S3 transaction.
   // A crashed larger checkpoint is replay-safely split to this size.
   S3_APPLY_BATCH_SIZE: 1,
+  // Full replay hashing above this size can exceed the Apps Script V8 heap.
+  // Such a message must carry a deterministic external full-hash attestation;
+  // Apps Script still validates its object metadata before advancing state.
+  S3_REPLAY_FULL_HASH_MAX_BYTES: 8 * 1024 * 1024,
   S3_MULTIPART_THRESHOLD_BYTES: 32 * 1024 * 1024,
   S3_MULTIPART_PART_BYTES: 8 * 1024 * 1024,
   S3_PROBE_MULTIPART: false,

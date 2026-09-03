@@ -781,6 +781,8 @@ function inspectArchiveBlob_(blob, id, encoding, expectedInnerFileName) {
 
 function readArchiveFileIntegrity_(file, record, probeDriveApiMedia) {
   const encoding = archiveEncodingForRecord_(record);
+  const boundedAttestation = readExternallyAttestedS3Integrity_(file, record);
+  if (boundedAttestation) return boundedAttestation;
   let blob;
   try {
     blob = file.getBlob();
@@ -854,4 +856,41 @@ function readArchiveFileIntegrity_(file, record, probeDriveApiMedia) {
       error: errorToString_(decodeError),
     };
   }
+}
+
+function readExternallyAttestedS3Integrity_(file, record) {
+  const verification = record && record.integrityVerification;
+  if (!isS3StorageBackend_() || !verification ||
+      verification.kind !== 'EXTERNAL_S3_FULL_SHA256_V1' ||
+      archiveEncodingForRecord_(record) !== 'EML' ||
+      expectedStoredBytesForRecord_(record) <= Number(backupConfig_().S3_REPLAY_FULL_HASH_MAX_BYTES)) {
+    return null;
+  }
+  const marker = archiveIntegrityMarkerForFile_(file, null);
+  const rawBytes = Number(record.rawBytes);
+  const storedBytes = expectedStoredBytesForRecord_(record);
+  const rawSha256 = String(record.sha256 || '').toLowerCase();
+  const storedSha256 = String(expectedStoredSha256ForRecord_(record) || '').toLowerCase();
+  const markerMatches = marker && marker.archiveEncoding === 'EML' &&
+    Number(marker.rawByteLength) === rawBytes && marker.rawSha256 === rawSha256;
+  if (!markerMatches || Number(file.getSize()) !== storedBytes ||
+      storedBytes !== rawBytes || storedSha256 !== rawSha256) {
+    return {
+      ok: false,
+      method: 'externalFullHashAttestation+S3Metadata',
+      downloadable: null,
+      error: 'Externally attested S3 object metadata no longer matches its catalog record.',
+    };
+  }
+  return {
+    ok: true,
+    method: 'externalFullHashAttestation+S3Metadata',
+    downloadable: null,
+    contentDecoded: false,
+    storedSha256: storedSha256,
+    rawSha256: rawSha256,
+    storedByteLength: storedBytes,
+    rawByteLength: rawBytes,
+    rawIntegritySource: 'externalFullHashAttestation',
+  };
 }
