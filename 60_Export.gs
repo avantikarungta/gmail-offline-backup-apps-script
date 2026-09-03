@@ -68,7 +68,8 @@ function processApplySlice_(state, executionStartedMs) {
 
     const start = state.apply.offset;
     let endExclusive;
-    if (state.apply.inFlight) {
+    const replayingInFlight = Boolean(state.apply.inFlight);
+    if (replayingInFlight) {
       validateInFlight_(state.apply.inFlight, state.plan.id, segmentIndex, start, entries.length);
       endExclusive = Number(state.apply.inFlight.endExclusive);
     } else {
@@ -87,44 +88,41 @@ function processApplySlice_(state, executionStartedMs) {
       measureOperation_(metrics, 'checkpointPersist', function () { saveState_(state); });
     }
 
-    const batchEntries = entries.slice(start, endExclusive);
+    let batchEntries = entries.slice(start, endExclusive);
     const segmentCommitsFolder = getOrCreateChildFolder_(commitsRoot, 'segment-' + padNumber_(segmentIndex, 8));
-    const commitName = commitFileName_(start, endExclusive);
-    let commitFile = firstFileByName_(segmentCommitsFolder, commitName);
-    let commit = null;
+    let commitName = commitFileName_(start, endExclusive);
+    let loadedCommit = loadValidApplyCommit_(
+      segmentCommitsFolder, commitName, state, layout, segmentIndex, start, endExclusive, batchEntries
+    );
+    let commitFile = loadedCommit.file;
+    let commit = loadedCommit.commit;
 
-    if (commitFile) {
-      try {
-        commit = readJsonFile_(commitFile, null);
-        validateCommit_(commit, state.plan.id, segmentIndex, start, endExclusive, batchEntries);
-        if (backupConfig_().VERIFY_REPLAYED_COMMITS) {
-          const validation = validateCommittedFiles_(commit, layout);
-          if (!validation.ok) {
-            logger_().warn('Discarding an invalid replay checkpoint ' + commitName + ': ' +
-              JSON.stringify(validation.failures));
-            quarantineCheckpointFile_(
-              layout.root,
-              commitFile,
-              state.plan.id,
-              'segment-' + padNumber_(segmentIndex, 8),
-              commitName
-            );
-            commitFile = null;
-            commit = null;
-          }
-        }
-      } catch (error) {
-        logger_().warn('Discarding an unreadable replay checkpoint ' + commitName + ': ' + errorToString_(error));
-        quarantineCheckpointFile_(
-          layout.root,
-          commitFile,
-          state.plan.id,
-          'segment-' + padNumber_(segmentIndex, 8),
-          commitName
-        );
-        commitFile = null;
-        commit = null;
-      }
+    // If a prior execution died after persisting a large checkpoint but before
+    // publishing its commit, reduce that exact frozen range before replay. Any
+    // objects written before the crash remain safe: canonical resolution will
+    // recover them, and subsequent sub-batches will publish their own commits.
+    const replayEndExclusive = applyReplayBatchEnd_(start, endExclusive);
+    if (!commitFile && replayingInFlight && replayEndExclusive < endExclusive) {
+      const originalEndExclusive = endExclusive;
+      endExclusive = replayEndExclusive;
+      state.apply.inFlight.endExclusive = endExclusive;
+      state.apply.inFlight.replaySplitFromEndExclusive = originalEndExclusive;
+      state.apply.inFlight.replaySplitAt = isoNow_();
+      state.updatedAt = isoNow_();
+      measureOperation_(metrics, 'checkpointPersist', function () { saveState_(state); });
+      logProgressEvent_('APPLY_REPLAY_BATCH_SPLIT', state, {
+        segmentIndex: segmentIndex,
+        start: start,
+        originalEndExclusive: originalEndExclusive,
+        endExclusive: endExclusive,
+      });
+      batchEntries = entries.slice(start, endExclusive);
+      commitName = commitFileName_(start, endExclusive);
+      loadedCommit = loadValidApplyCommit_(
+        segmentCommitsFolder, commitName, state, layout, segmentIndex, start, endExclusive, batchEntries
+      );
+      commitFile = loadedCommit.file;
+      commit = loadedCommit.commit;
     }
 
     if (!commitFile) {
@@ -169,6 +167,51 @@ function processApplySlice_(state, executionStartedMs) {
   state.lastSliceMetrics = summarizeOperationMetrics_(metrics);
   if (state.apply.segmentIndex >= segmentCount) {
     finalizeApply_(state);
+  }
+}
+
+function loadValidApplyCommit_(
+  segmentCommitsFolder,
+  commitName,
+  state,
+  layout,
+  segmentIndex,
+  start,
+  endExclusive,
+  batchEntries
+) {
+  let commitFile = firstFileByName_(segmentCommitsFolder, commitName);
+  if (!commitFile) return {file: null, commit: null};
+
+  try {
+    const commit = readJsonFile_(commitFile, null);
+    validateCommit_(commit, state.plan.id, segmentIndex, start, endExclusive, batchEntries);
+    if (backupConfig_().VERIFY_REPLAYED_COMMITS) {
+      const validation = validateCommittedFiles_(commit, layout);
+      if (!validation.ok) {
+        logger_().warn('Discarding an invalid replay checkpoint ' + commitName + ': ' +
+          JSON.stringify(validation.failures));
+        quarantineCheckpointFile_(
+          layout.root,
+          commitFile,
+          state.plan.id,
+          'segment-' + padNumber_(segmentIndex, 8),
+          commitName
+        );
+        return {file: null, commit: null};
+      }
+    }
+    return {file: commitFile, commit: commit};
+  } catch (error) {
+    logger_().warn('Discarding an unreadable replay checkpoint ' + commitName + ': ' + errorToString_(error));
+    quarantineCheckpointFile_(
+      layout.root,
+      commitFile,
+      state.plan.id,
+      'segment-' + padNumber_(segmentIndex, 8),
+      commitName
+    );
+    return {file: null, commit: null};
   }
 }
 
@@ -604,7 +647,17 @@ function chooseApplyBatchSize_(state, executionStartedMs, remainingInShard) {
   const estimatedMs = Math.max(250, learnedMs || backupConfig_().DEFAULT_ESTIMATED_MS_PER_MESSAGE);
   let size = Math.max(1, Math.floor(usableMs / estimatedMs));
   if (!learnedMs) size = Math.min(size, backupConfig_().INITIAL_APPLY_BATCH_SIZE);
-  return Math.min(backupConfig_().APPLY_BATCH_SIZE, Number(remainingInShard || 0), size);
+  return Math.min(applyBatchSizeLimit_(), Number(remainingInShard || 0), size);
+}
+
+function applyBatchSizeLimit_() {
+  return Number(isS3StorageBackend_()
+    ? backupConfig_().S3_APPLY_BATCH_SIZE
+    : backupConfig_().APPLY_BATCH_SIZE);
+}
+
+function applyReplayBatchEnd_(start, endExclusive) {
+  return Math.min(Number(endExclusive), Number(start) + applyBatchSizeLimit_());
 }
 
 function validateCommittedFiles_(commit, layout) {
