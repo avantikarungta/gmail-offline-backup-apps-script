@@ -48,7 +48,9 @@ const BACKUP_CONFIG = Object.freeze({
   S3_ADDRESSING_STYLE: 'PATH',
   S3_LIST_PAGE_SIZE: 500,
   S3_MAX_PARALLEL_REQUESTS: 8,
-  S3_MAX_PARALLEL_BYTES: 16 * 1024 * 1024,
+  // Keep a wave below Apps Script's practical V8 heap ceiling. Each upload is
+  // also referenced by the Gmail response, archive record, and UrlFetch call.
+  S3_MAX_PARALLEL_BYTES: 8 * 1024 * 1024,
   S3_MULTIPART_THRESHOLD_BYTES: 32 * 1024 * 1024,
   S3_MULTIPART_PART_BYTES: 8 * 1024 * 1024,
   S3_PROBE_MULTIPART: false,

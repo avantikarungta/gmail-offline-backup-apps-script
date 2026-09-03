@@ -60,15 +60,30 @@ function gmailRawBytes_(raw) {
 }
 
 function normalizeByteArray_(values) {
-  return Array.prototype.map.call(values || [], function (value, index) {
+  const source = values || [];
+  const length = Number(source.length || 0);
+  let needsCopy = !Array.isArray(source);
+
+  for (let index = 0; index < length; index++) {
+    const value = source[index];
     const n = Number(value);
     if (!Number.isFinite(n) || Math.floor(n) !== n || n < -128 || n > 255) {
       throw new Error('Invalid Gmail RAW byte at index ' + index + ': ' + value);
     }
-    // Apps Script Byte[] uses signed Java byte values. Convert unsigned test or
-    // REST-helper values into that range without changing the underlying byte.
-    return n > 127 ? n - 256 : n;
-  });
+    if (value !== n || n > 127) needsCopy = true;
+  }
+
+  // Advanced Gmail and UrlFetch both use signed Apps Script Byte[] arrays.
+  // Returning an already-normalized array avoids another full payload-sized
+  // allocation at every decode, hash, signing, and upload boundary.
+  if (!needsCopy) return source;
+
+  const normalized = new Array(length);
+  for (let index = 0; index < length; index++) {
+    const n = Number(source[index]);
+    normalized[index] = n > 127 ? n - 256 : n;
+  }
+  return normalized;
 }
 
 function gmailCall_(fn, operationName) {

@@ -437,14 +437,29 @@ function listCanonical(folder) {
   assert.strictEqual(sandbox.__BACKUP_CONFIG.VERSION, '1.3.0-dev.14');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.DRIVE_WRITE_MODE, 'PARALLEL_API');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.ARCHIVE_ENCODING, 'ZIP');
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_MAX_PARALLEL_BYTES, 8 * 1024 * 1024);
   assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.14');
 
   // SigV4 requests never expose credentials in URLs and sign all required
   // S3 headers. The XML parser covers paginated objects and virtual folders.
+  const signedPayload = [0, 1, -1];
+  assert.strictEqual(
+    sandbox.normalizeByteArray_(signedPayload),
+    signedPayload,
+    'already-normalized Apps Script Byte[] values should not be copied'
+  );
+  assert.deepStrictEqual(
+    Array.from(sandbox.normalizeByteArray_([0, 127, 128, 255])),
+    [0, 127, -128, -1],
+    'unsigned byte arrays should still be converted to Apps Script signed bytes'
+  );
   const signedS3 = sandbox.buildS3SignedRequest_(
     {bucket: 'archive-bucket', endpoint: 'https://example.r2.cloudflarestorage.com', region: 'auto', addressingStyle: 'PATH'},
     {accessKeyId: 'ACCESS123', secretAccessKey: 'secret-value', sessionToken: 'temporary-token'},
-    {method: 'PUT', key: 'prefix/message.eml.zip', bytes: [0, 1, -1], headers: {'if-none-match': '*'}}
+    {
+      method: 'PUT', key: 'prefix/message.eml.zip', bytes: signedPayload,
+      payloadHash: sandbox.sha256Hex_(signedPayload), headers: {'if-none-match': '*'},
+    }
   );
   assert.match(signedS3.url, /^https:\/\/example\.r2\.cloudflarestorage\.com\/archive-bucket\/prefix\/message\.eml\.zip$/);
   assert(!signedS3.url.includes('ACCESS123'));
@@ -452,6 +467,15 @@ function listCanonical(folder) {
   assert.match(signedS3.headers.authorization, /^AWS4-HMAC-SHA256 Credential=ACCESS123\//);
   assert.strictEqual(signedS3.headers['if-none-match'], '*');
   assert.strictEqual(signedS3.headers['x-amz-security-token'], 'temporary-token');
+  assert.strictEqual(signedS3.payload, signedPayload, 'SigV4 should reuse normalized payload bytes');
+  assert.throws(
+    () => sandbox.buildS3SignedRequest_(
+      {bucket: 'archive-bucket', endpoint: 'https://example.r2.cloudflarestorage.com', region: 'auto', addressingStyle: 'PATH'},
+      {accessKeyId: 'ACCESS123', secretAccessKey: 'secret-value'},
+      {method: 'PUT', key: 'bad-hash', bytes: signedPayload, payloadHash: 'not-a-sha256'}
+    ),
+    /payloadHash/
+  );
   const capturedHeadRequests = [];
   const s3HeadRuntime = sandbox.GmailBackupLibrary.createRuntime({services: {
     urlFetch: {

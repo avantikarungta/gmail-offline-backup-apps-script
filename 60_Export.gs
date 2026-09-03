@@ -217,6 +217,10 @@ function exportQueueBatch_(state, layout, segmentIndex, start, endExclusive, ent
     const bytes = measureOperation_(context.metrics, 'rawConversion', function () {
       return gmailRawBytes_(message.raw);
     });
+    // The remaining commit metadata does not need Gmail's raw field. Drop that
+    // reference before buffering uploads so the V8 heap retains only the
+    // canonical byte array, not both the API response and archive payload.
+    message.raw = null;
     recordOperationBytes_(context.metrics, 'gmailGetRaw', bytes.length);
     const sha256 = measureOperation_(context.metrics, 'sha256', function () {
       return sha256Hex_(bytes);
@@ -351,6 +355,7 @@ function flushParallelDriveUploads_(pendingUploads, records, context) {
       mimeType: upload.archive.mimeType,
       parentId: upload.folderId,
       bytes: upload.archive.storedBytes,
+      payloadSha256: upload.archive.storedSha256,
       appProperties: archiveIntegrityProperties_(upload.archive),
     };
   });

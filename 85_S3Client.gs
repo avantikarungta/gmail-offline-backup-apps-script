@@ -195,7 +195,11 @@ function buildS3SignedRequest_(profile, credentials, operation) {
   const canonicalUri = s3CanonicalPath_(objectPath || '/');
   const canonicalQuery = s3CanonicalQuery_(operation.query || {});
   const bytes = normalizeByteArray_(operation.bytes || []);
-  const payloadHash = sha256Hex_(bytes);
+  const suppliedPayloadHash = String(operation.payloadHash || '').toLowerCase();
+  if (suppliedPayloadHash && !/^[0-9a-f]{64}$/.test(suppliedPayloadHash)) {
+    throw new Error('S3 payloadHash must be a lowercase or uppercase SHA-256 hex digest.');
+  }
+  const payloadHash = suppliedPayloadHash || sha256Hex_(bytes);
   const now = operation.now || new Date();
   const amzDate = utilitiesService_().formatDate(now, 'Etc/UTC', "yyyyMMdd'T'HHmmss'Z'");
   const dateStamp = amzDate.slice(0, 8);
@@ -559,6 +563,7 @@ function s3ApiCreateFiles_(specs) {
       key: key,
       request: buildS3SignedRequest_(client.profile, client.credentials, {
         method: 'PUT', key: key, headers: headers, bytes: spec.bytes || [],
+        payloadHash: spec.payloadSha256 || '',
       }),
     };
   });
