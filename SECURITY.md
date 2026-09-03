@@ -25,6 +25,14 @@ requests, object keys in provider error XML, and endpoints containing
 credentials are not logged. Prefer prefix-scoped, least-privilege credentials
 and rotate them according to provider policy.
 
+The optional local oversized-message recovery reads credentials and one
+selected message path from ignored `.env`; output is limited to counts and
+fingerprints. It accepts production writes only for an exact paused checkpoint,
+uses create-only semantics, and verifies the complete canonical R2 object before
+publishing its deterministic commit. The downloaded `.eml` remains sensitive
+local data and should be securely removed after the archive is independently
+verified.
+
 ## Why Drive scope is broad
 
 The Apps Script Drive service does not offer a narrow “only files created by this script” scope for this design. The exporter needs to create files/folders, inspect existing archive files, hash them, update manifests/catalogs, and move conflicts into quarantine.
@@ -37,7 +45,7 @@ Takeout/IMAP restrictions may reflect data-loss-prevention policy. Obtain permis
 
 ## Local/offline storage
 
-The `.eml.zip` files contain complete `.eml` message bodies, headers,
+The `.eml` or `.eml.zip` files contain complete message bodies, headers,
 attachments, and inline images. Treat the offline copy as sensitive corporate data:
 
 - use full-disk or encrypted-volume protection;

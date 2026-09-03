@@ -119,6 +119,26 @@ Gmail **Download message** action for the selected checkpoint entry, then run
 exactly one recent `.eml`; command output never includes its name, path, or
 content.
 
+For a production S3/R2 APPLY that failed after writing the canonical object
+but before its one-message commit, first checkpoint-safely pause the project.
+Run `make external-inspect-s3-blocked`; only if it reports a valid canonical
+object, run `make external-repair-s3-blocked
+CONFIRM=external-repair-s3-blocked`. The command requires the ignored `.env`
+to identify the already-bound prefix and archive root name. It validates the
+paused state, immutable queue entry, Apps Script integrity metadata, complete
+object bytes, and SHA-256, then conditionally creates the missing commit. It
+does not edit Script Properties or advance the cursor; resume lets ordinary
+replay do that transactionally.
+
+If inspection reports no canonical object, run
+`make external-select-s3-blocked`, download that exact Gmail message through
+the signed-in Gmail UI, then run `make external-select-download` and
+`make external-local-check`. Finish with `make external-import-s3-blocked
+CONFIRM=external-import-s3-blocked`. The importer revalidates the paused
+checkpoint and selected Gmail ID, conditionally writes the canonical object
+with Apps Script integrity metadata, verifies the complete stored bytes, and
+conditionally publishes the exact commit. It is safe to replay after a crash.
+
 ## Monitoring And Logs
 
 ```sh

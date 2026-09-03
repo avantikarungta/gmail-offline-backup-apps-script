@@ -387,9 +387,387 @@ async function headObject(profile, key) {
   const response = await s3Request(profile, {method: 'HEAD', key});
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`R2 HEAD failed (${response.status}).`);
+  const metadata = {};
+  response.headers.forEach((value, name) => {
+    const normalized = String(name).toLowerCase();
+    if (normalized.startsWith('x-amz-meta-')) metadata[normalized.slice(11)] = value;
+  });
   return {
     bytes: Number(response.headers.get('content-length') || 0),
     rawSha256: response.headers.get('x-amz-meta-raw-sha256') || '',
+    contentType: response.headers.get('content-type') || 'application/octet-stream',
+    etag: response.headers.get('etag') || '',
+    metadata,
+  };
+}
+
+async function getObject(profile, key) {
+  const response = await s3Request(profile, {
+    method: 'GET', key, headers: {'accept-encoding': 'identity'},
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`R2 GET failed (${response.status}).`);
+  return {
+    bytes: Buffer.from(await response.arrayBuffer()),
+    contentType: response.headers.get('content-type') || 'application/octet-stream',
+  };
+}
+
+async function readJsonObject(profile, key, label) {
+  const object = await getObject(profile, key);
+  if (!object) throw new Error(`${label || 'JSON object'} was not found in R2.`);
+  if (object.bytes.length > 16 * 1024 * 1024) {
+    throw new Error(`${label || 'JSON object'} exceeds the bounded 16 MiB reader limit.`);
+  }
+  try {
+    return JSON.parse(object.bytes.toString('utf8'));
+  } catch (ignored) {
+    throw new Error(`${label || 'JSON object'} is not valid JSON.`);
+  }
+}
+
+function safeS3ChildName(value, label) {
+  const text = String(value || '');
+  if (!text || text === '.' || text === '..' || /[\\/\u0000-\u001f]/.test(text)) {
+    throw new Error(`${label || 'S3 path component'} must be one non-empty path component.`);
+  }
+  return text;
+}
+
+function archiveRootPrefix(profile, rootName) {
+  return `${profile.prefix}${safeS3ChildName(rootName, 'R2_ARCHIVE_ROOT_NAME')}/`;
+}
+
+function messageShard(messageId, shardCount) {
+  const normalized = String(messageId || '').toLowerCase();
+  if (!normalized) throw new Error('Cannot shard an empty Gmail message ID.');
+  const tail = normalized.slice(-2).padStart(2, '0');
+  let value;
+  if (/^[0-9a-f]{2}$/.test(tail)) {
+    value = parseInt(tail, 16);
+  } else {
+    value = 0;
+    for (let index = 0; index < normalized.length; index++) {
+      value = ((value * 31) + normalized.charCodeAt(index)) & 0xff;
+    }
+  }
+  const count = Number(shardCount || 64);
+  if (!Number.isInteger(count) || count < 1 || count > 256) {
+    throw new Error('Archive shard count must be an integer between 1 and 256.');
+  }
+  return (value % count).toString(16).padStart(2, '0');
+}
+
+function applyCommitFileName(start, endExclusive) {
+  return `${String(Number(start)).padStart(8, '0')}-${String(Number(endExclusive)).padStart(8, '0')}.json`;
+}
+
+function parseAppsScriptArchiveMarker(encoded) {
+  const value = String(encoded || '');
+  if (!value || !/^[A-Za-z0-9+/]+={0,2}$/.test(value) || value.length % 4 !== 0) {
+    throw new Error('Canonical R2 object lacks valid Apps Script integrity metadata.');
+  }
+  const description = Buffer.from(value, 'base64').toString('utf8');
+  const prefix = 'GMAIL_BACKUP_ARCHIVE_V1 ';
+  if (!description.startsWith(prefix)) {
+    throw new Error('Canonical R2 object has an unsupported integrity marker.');
+  }
+  let marker;
+  try {
+    marker = JSON.parse(description.slice(prefix.length));
+  } catch (ignored) {
+    throw new Error('Canonical R2 object integrity metadata is not valid JSON.');
+  }
+  const rawBytes = Number(marker && marker.gbRawBytes);
+  const rawSha256 = String(marker && marker.gbRawSha256 || '').toLowerCase();
+  if (!marker || marker.gbSchema !== '1' || String(marker.gbEncoding || '').toUpperCase() !== 'EML' ||
+      !Number.isInteger(rawBytes) || rawBytes <= 0 || !/^[0-9a-f]{64}$/.test(rawSha256)) {
+    throw new Error('Canonical R2 object integrity metadata is incomplete or incompatible.');
+  }
+  return {archiveEncoding: 'EML', rawBytes, rawSha256};
+}
+
+function validatePausedSingleMessageCheckpoint(status) {
+  const inFlight = status && status.apply && status.apply.inFlight;
+  const segmentIndex = Number(inFlight && inFlight.segmentIndex);
+  const start = Number(inFlight && inFlight.start);
+  const endExclusive = Number(inFlight && inFlight.endExclusive);
+  if (!status || status.phase !== 'PAUSED' || status.effectivePhase !== 'APPLYING') {
+    throw new Error('R2 status must show a checkpoint-safe PAUSED APPLY before external repair.');
+  }
+  if (!status.planId || !Number.isInteger(segmentIndex) || segmentIndex < 0 ||
+      !Number.isInteger(start) || start < 0 || endExclusive !== start + 1 ||
+      Number(status.apply.segmentIndex) !== segmentIndex || Number(status.apply.offset) !== start) {
+    throw new Error('R2 status does not contain an exact one-message APPLY checkpoint.');
+  }
+  return {
+    planId: safeS3ChildName(status.planId, 'plan ID'),
+    segmentIndex,
+    start,
+    endExclusive,
+  };
+}
+
+function buildExternalRepairCommit(context, integrity, now) {
+  const timestamp = (now || new Date()).toISOString();
+  const record = {
+    id: context.entry.id,
+    threadId: context.entry.threadId || '',
+    archiveShard: context.archiveShard,
+    queueSegment: context.checkpoint.segmentIndex,
+    status: 'exported',
+    labelIds: [],
+    historyId: '',
+    internalDate: '',
+    sizeEstimate: integrity.rawBytes,
+    archiveEncoding: 'EML',
+    rawBytes: integrity.rawBytes,
+    sha256: integrity.rawSha256,
+    storedBytes: integrity.rawBytes,
+    storedSha256: integrity.rawSha256,
+    fileName: `${context.entry.id}.eml`,
+    innerFileName: null,
+    mimeType: 'message/rfc822',
+    storageFileId: context.canonicalKey,
+    foundExisting: true,
+    recoveredExisting: true,
+    replacedConflict: false,
+    quarantinedExistingFiles: 0,
+    exportedAt: timestamp,
+  };
+  return {
+    schemaVersion: 2,
+    planId: context.checkpoint.planId,
+    queueSegment: context.checkpoint.segmentIndex,
+    start: context.checkpoint.start,
+    endExclusive: context.checkpoint.endExclusive,
+    createdAt: timestamp,
+    durationMs: 1,
+    finishedAt: timestamp,
+    summary: {
+      processed: 1,
+      exported: 1,
+      gone: 0,
+      rawBytes: integrity.rawBytes,
+      storedBytes: integrity.rawBytes,
+    },
+    records: [record],
+  };
+}
+
+function validateExternalRepairCommit(commit, context, integrity) {
+  const record = commit && Array.isArray(commit.records) && commit.records[0];
+  const summary = commit && commit.summary;
+  if (!commit || Number(commit.schemaVersion) !== 2 ||
+      commit.planId !== context.checkpoint.planId ||
+      Number(commit.queueSegment) !== context.checkpoint.segmentIndex ||
+      Number(commit.start) !== context.checkpoint.start ||
+      Number(commit.endExclusive) !== context.checkpoint.endExclusive ||
+      !record || commit.records.length !== 1 || record.id !== context.entry.id ||
+      record.status !== 'exported' || record.archiveEncoding !== 'EML' ||
+      record.archiveShard !== context.archiveShard || record.fileName !== `${context.entry.id}.eml` ||
+      record.storageFileId !== context.canonicalKey || Number(record.rawBytes) !== integrity.rawBytes ||
+      Number(record.storedBytes) !== integrity.rawBytes || record.sha256 !== integrity.rawSha256 ||
+      record.storedSha256 !== integrity.rawSha256 || !summary ||
+      Number(summary.processed) !== 1 || Number(summary.exported) !== 1 ||
+      Number(summary.gone) !== 0 || Number(summary.rawBytes) !== integrity.rawBytes ||
+      Number(summary.storedBytes) !== integrity.rawBytes) {
+    throw new Error('Existing APPLY commit does not match the paused queue entry and canonical R2 object.');
+  }
+  return commit;
+}
+
+async function blockedS3Context(profile) {
+  const rootPrefix = archiveRootPrefix(profile, required('R2_ARCHIVE_ROOT_NAME'));
+  const status = await readJsonObject(profile, `${rootPrefix}status.json`, 'R2 status.json');
+  const checkpoint = validatePausedSingleMessageCheckpoint(status);
+  const segmentName = `segment-${String(checkpoint.segmentIndex).padStart(8, '0')}.json`;
+  const segmentKey = `${rootPrefix}plans/${checkpoint.planId}/work-queue/${segmentName}`;
+  const segment = await readJsonObject(profile, segmentKey, 'immutable work-queue segment');
+  const entry = segment && Array.isArray(segment.entries) ? segment.entries[checkpoint.start] : null;
+  if (!segment || segment.planId !== checkpoint.planId ||
+      Number(segment.segmentIndex) !== checkpoint.segmentIndex || !entry || !entry.id) {
+    throw new Error('Immutable work-queue segment does not match the paused APPLY checkpoint.');
+  }
+  const messageId = safeS3ChildName(entry.id, 'Gmail message ID');
+  const archiveShard = messageShard(messageId, 64);
+  const canonicalKey = `${rootPrefix}data/shard-${archiveShard}/${messageId}.eml`;
+  const commitKey = `${rootPrefix}plans/${checkpoint.planId}/commits/segment-${String(checkpoint.segmentIndex).padStart(8, '0')}/` +
+    applyCommitFileName(checkpoint.start, checkpoint.endExclusive);
+  return {status, checkpoint, entry, archiveShard, canonicalKey, commitKey};
+}
+
+async function validateCanonicalR2Object(profile, context) {
+  const head = await headObject(profile, context.canonicalKey);
+  if (!head) return null;
+  if (!/^message\/rfc822(?:\s*;|$)/i.test(head.contentType)) {
+    throw new Error('Canonical R2 object has an unexpected content type.');
+  }
+  const integrity = parseAppsScriptArchiveMarker(head.metadata['gb-description-b64']);
+  const object = await getObject(profile, context.canonicalKey);
+  if (!object || object.bytes.length !== head.bytes || object.bytes.length !== integrity.rawBytes) {
+    throw new Error('Canonical R2 object byte length does not match its integrity metadata.');
+  }
+  const actualSha256 = sha256Hex(object.bytes);
+  if (actualSha256 !== integrity.rawSha256) {
+    throw new Error('Canonical R2 object SHA-256 does not match its integrity metadata.');
+  }
+  return integrity;
+}
+
+async function inspectBlockedS3() {
+  const profile = s3Profile();
+  const context = await blockedS3Context(profile);
+  const integrity = await validateCanonicalR2Object(profile, context);
+  const commitExists = Boolean(await headObject(profile, context.commitKey));
+  return {
+    ok: true,
+    phase: context.status.phase,
+    checkpoint: {
+      segmentIndex: context.checkpoint.segmentIndex,
+      start: context.checkpoint.start,
+      endExclusive: context.checkpoint.endExclusive,
+    },
+    messageFingerprint: fingerprint(context.entry.id),
+    canonicalObjectPresent: Boolean(integrity),
+    canonicalObjectValid: Boolean(integrity),
+    rawBytes: integrity ? integrity.rawBytes : null,
+    rawSha256Prefix: integrity ? integrity.rawSha256.slice(0, 16) : null,
+    commitPresent: commitExists,
+  };
+}
+
+async function selectBlockedS3(envPath) {
+  const profile = s3Profile();
+  const context = await blockedS3Context(profile);
+  updateEnvFile(envPath, {GMAIL_MESSAGE_ID: context.entry.id});
+  return {
+    selected: true,
+    checkpoint: {
+      segmentIndex: context.checkpoint.segmentIndex,
+      start: context.checkpoint.start,
+      endExclusive: context.checkpoint.endExclusive,
+    },
+    messageFingerprint: fingerprint(context.entry.id),
+  };
+}
+
+function appsScriptArchiveMarker(rawBytes, rawSha256) {
+  const description = 'GMAIL_BACKUP_ARCHIVE_V1 ' + JSON.stringify({
+    gbSchema: '1',
+    gbEncoding: 'EML',
+    gbRawBytes: String(rawBytes),
+    gbRawSha256: String(rawSha256),
+  });
+  return Buffer.from(description, 'utf8').toString('base64');
+}
+
+async function publishExternalRepairCommit(profile, context, integrity) {
+  const expectedCommit = buildExternalRepairCommit(context, integrity);
+  const existing = await headObject(profile, context.commitKey);
+  let created = false;
+  if (existing) {
+    validateExternalRepairCommit(
+      await readJsonObject(profile, context.commitKey, 'existing APPLY commit'), context, integrity
+    );
+  } else {
+    const bytes = Buffer.from(JSON.stringify(expectedCommit), 'utf8');
+    const response = await s3Request(profile, {
+      method: 'PUT', key: context.commitKey, body: bytes,
+      headers: {'content-type': 'text/plain', 'if-none-match': '*'},
+    });
+    if (![200, 201, 204, 412].includes(response.status)) {
+      throw new Error(`R2 conditional commit PUT failed (${response.status}).`);
+    }
+    created = response.status !== 412;
+    validateExternalRepairCommit(
+      await readJsonObject(profile, context.commitKey, 'published APPLY commit'), context, integrity
+    );
+  }
+  return {created, replayed: !created};
+}
+
+async function repairBlockedS3() {
+  if (String(process.env.CONFIRM || '') !== 'external-repair-s3-blocked') {
+    throw new Error('Refusing R2 commit write. Re-run with CONFIRM=external-repair-s3-blocked.');
+  }
+  const profile = s3Profile();
+  const context = await blockedS3Context(profile);
+  const integrity = await validateCanonicalR2Object(profile, context);
+  if (!integrity) {
+    throw new Error('The paused message has no canonical R2 object to recover; no commit was written.');
+  }
+  const published = await publishExternalRepairCommit(profile, context, integrity);
+  return {
+    ok: true,
+    checkpoint: {
+      segmentIndex: context.checkpoint.segmentIndex,
+      start: context.checkpoint.start,
+      endExclusive: context.checkpoint.endExclusive,
+    },
+    messageFingerprint: fingerprint(context.entry.id),
+    objectFingerprint: fingerprint(context.canonicalKey),
+    commitFingerprint: fingerprint(context.commitKey),
+    rawBytes: integrity.rawBytes,
+    rawSha256Prefix: integrity.rawSha256.slice(0, 16),
+    created: published.created,
+    replayed: published.replayed,
+  };
+}
+
+async function importBlockedS3() {
+  if (String(process.env.CONFIRM || '') !== 'external-import-s3-blocked') {
+    throw new Error('Refusing canonical R2 import. Re-run with CONFIRM=external-import-s3-blocked.');
+  }
+  const profile = s3Profile();
+  const context = await blockedS3Context(profile);
+  if (required('GMAIL_MESSAGE_ID') !== context.entry.id) {
+    throw new Error('Selected Gmail message does not match the current paused queue entry.');
+  }
+  const selected = localEml();
+  const rawSha256 = sha256Hex(selected.bytes);
+  const expectedIntegrity = {
+    archiveEncoding: 'EML', rawBytes: selected.bytes.length, rawSha256,
+  };
+  let canonicalCreated = false;
+  const existing = await headObject(profile, context.canonicalKey);
+  if (!existing) {
+    const response = await s3Request(profile, {
+      method: 'PUT', key: context.canonicalKey, body: selected.bytes,
+      headers: {
+        'content-type': 'message/rfc822',
+        'if-none-match': '*',
+        'x-amz-meta-gb-description-b64': appsScriptArchiveMarker(selected.bytes.length, rawSha256),
+      },
+    });
+    if (![200, 201, 204, 412].includes(response.status)) {
+      throw new Error(`R2 conditional canonical PUT failed (${response.status}).`);
+    }
+    canonicalCreated = response.status !== 412;
+  }
+  const actualIntegrity = await validateCanonicalR2Object(profile, context);
+  if (!actualIntegrity || actualIntegrity.rawBytes !== expectedIntegrity.rawBytes ||
+      actualIntegrity.rawSha256 !== expectedIntegrity.rawSha256) {
+    throw new Error('Canonical R2 object does not match the selected local EML; refusing to publish a commit.');
+  }
+  const published = await publishExternalRepairCommit(profile, context, actualIntegrity);
+  return {
+    ok: true,
+    checkpoint: {
+      segmentIndex: context.checkpoint.segmentIndex,
+      start: context.checkpoint.start,
+      endExclusive: context.checkpoint.endExclusive,
+    },
+    messageFingerprint: fingerprint(context.entry.id),
+    fileFingerprint: fingerprint(selected.absolutePath),
+    objectFingerprint: fingerprint(context.canonicalKey),
+    commitFingerprint: fingerprint(context.commitKey),
+    rawBytes: actualIntegrity.rawBytes,
+    rawSha256Prefix: actualIntegrity.rawSha256.slice(0, 16),
+    canonicalCreated,
+    canonicalReplayed: !canonicalCreated,
+    commitCreated: published.created,
+    commitReplayed: published.replayed,
   };
 }
 
@@ -549,6 +927,10 @@ async function main() {
   else if (command === 'select-download') result = selectRecentDownload(envPath);
   else if (command === 'local-check') result = localCheck();
   else if (command === 'fetch-check') result = await fetchCheck();
+  else if (command === 'inspect-s3-blocked') result = await inspectBlockedS3();
+  else if (command === 'select-s3-blocked') result = await selectBlockedS3(envPath);
+  else if (command === 'repair-s3-blocked') result = await repairBlockedS3();
+  else if (command === 'import-s3-blocked') result = await importBlockedS3();
   else if (command === 'probe-r2') result = await probeR2();
   else if (command === 'export-one') result = await exportOne();
   else if (command === 'upload-local') result = await uploadLocal();
@@ -569,12 +951,20 @@ if (require.main === module) {
 module.exports = {
   base64UrlToBuffer,
   buildSignedS3Request,
+  buildExternalRepairCommit,
+  appsScriptArchiveMarker,
   canonicalPath,
   fingerprint,
+  applyCommitFileName,
+  archiveRootPrefix,
+  messageShard,
   normalizePrefix,
+  parseAppsScriptArchiveMarker,
   parseEnv,
   recentEmlFiles,
   selfTest,
   updateEnvFile,
+  validateExternalRepairCommit,
+  validatePausedSingleMessageCheckpoint,
   validateEmlBytes,
 };

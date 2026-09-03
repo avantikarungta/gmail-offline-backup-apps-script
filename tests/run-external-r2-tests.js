@@ -17,6 +17,50 @@ assert.throws(() => tool.validateEmlBytes(Buffer.from('not an email')), /RFC 822
 assert.throws(() => tool.parseEnv('not valid'), /line 1/);
 assert.strictEqual(tool.base64UrlToBuffer('AAECA_7_').toString('hex'), '00010203feff');
 assert.strictEqual(tool.fingerprint('message-id').length, 16);
+assert.strictEqual(tool.archiveRootPrefix({prefix: 'base/'}, 'Gmail Offline Backup'),
+  'base/Gmail Offline Backup/');
+assert.strictEqual(tool.messageShard('abcdef3f', 64), '3f');
+assert.strictEqual(tool.messageShard('abcdef40', 64), '00');
+assert.strictEqual(tool.applyCommitFileName(5, 6), '00000005-00000006.json');
+
+const rawDigest = 'a'.repeat(64);
+const marker = Buffer.from('GMAIL_BACKUP_ARCHIVE_V1 ' + JSON.stringify({
+  gbSchema: '1', gbEncoding: 'EML', gbRawBytes: '123', gbRawSha256: rawDigest,
+})).toString('base64');
+assert.deepStrictEqual(tool.parseAppsScriptArchiveMarker(marker), {
+  archiveEncoding: 'EML', rawBytes: 123, rawSha256: rawDigest,
+});
+assert.strictEqual(tool.appsScriptArchiveMarker(123, rawDigest), marker);
+assert.throws(() => tool.parseAppsScriptArchiveMarker('not-base64'), /integrity metadata/);
+
+const pausedStatus = {
+  phase: 'PAUSED', effectivePhase: 'APPLYING', planId: 'plan-1',
+  apply: {segmentIndex: 0, offset: 5, inFlight: {segmentIndex: 0, start: 5, endExclusive: 6}},
+};
+assert.deepStrictEqual(tool.validatePausedSingleMessageCheckpoint(pausedStatus), {
+  planId: 'plan-1', segmentIndex: 0, start: 5, endExclusive: 6,
+});
+assert.throws(() => tool.validatePausedSingleMessageCheckpoint(Object.assign({}, pausedStatus, {phase: 'APPLYING'})),
+  /PAUSED APPLY/);
+
+const repairContext = {
+  checkpoint: {planId: 'plan-1', segmentIndex: 0, start: 5, endExclusive: 6},
+  entry: {id: 'abcdef3f', threadId: 'thread-1'},
+  archiveShard: '3f',
+  canonicalKey: 'base/Gmail Offline Backup/data/shard-3f/abcdef3f.eml',
+};
+const repairIntegrity = {archiveEncoding: 'EML', rawBytes: 123, rawSha256: rawDigest};
+const repairCommit = tool.buildExternalRepairCommit(
+  repairContext, repairIntegrity, new Date('2026-09-03T12:00:00.000Z')
+);
+assert.strictEqual(tool.validateExternalRepairCommit(repairCommit, repairContext, repairIntegrity), repairCommit);
+assert.deepStrictEqual(repairCommit.summary, {
+  processed: 1, exported: 1, gone: 0, rawBytes: 123, storedBytes: 123,
+});
+assert.strictEqual(repairCommit.records[0].storageFileId, repairContext.canonicalKey);
+assert.throws(() => tool.validateExternalRepairCommit(
+  Object.assign({}, repairCommit, {start: 4}), repairContext, repairIntegrity
+), /does not match/);
 
 const profile = {
   endpoint: new URL('https://account.r2.cloudflarestorage.com'),

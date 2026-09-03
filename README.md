@@ -715,6 +715,20 @@ paths, OAuth tokens, R2 secrets, or the canonical object key. It is a bounded
 proof path, not yet a replacement for PLAN/APPLY or its catalog transaction
 protocol.
 
+A separate production recovery path handles the narrower case where Apps
+Script already wrote and marked a canonical R2 `.eml` but ran out of memory
+before publishing its APPLY commit. With the worker checkpoint-safely paused,
+`make external-inspect-s3-blocked` verifies the exact queue entry and complete
+object integrity. `make external-repair-s3-blocked
+CONFIRM=external-repair-s3-blocked` then uses create-only semantics to publish
+only that deterministic one-message commit. Normal Apps Script replay remains
+responsible for catalog merge and cursor advancement after `make resume`.
+If inspection finds no canonical object, `make external-select-s3-blocked`
+freezes the selected ID from the current queue in ignored `.env`; after that
+exact Gmail message is downloaded and selected, `make
+external-import-s3-blocked CONFIRM=external-import-s3-blocked` conditionally
+creates and fully verifies both the canonical object and its commit.
+
 ## Timing expectations
 
 PLAN is mostly count-driven and includes two ID scans, a 64-shard archive audit, and ordered queue construction. With default settings, broad initial ranges are:

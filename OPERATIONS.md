@@ -179,6 +179,38 @@ never overwritten. This proof does not advance Apps Script state or publish a
 catalog record. Preserve the partial Drive archive until a full migration or
 new-archive design has been validated.
 
+If a production S3/R2 APPLY dies after its canonical message object is
+durably written but before its commit record is published, keep the backup
+paused and use the bounded recovery operation:
+
+```sh
+make external-inspect-s3-blocked
+make external-repair-s3-blocked CONFIRM=external-repair-s3-blocked
+```
+
+Set `R2_KEY_PREFIX` to the already-bound production prefix and
+`R2_ARCHIVE_ROOT_NAME` to the configured `ROOT_FOLDER_NAME`. Inspection is
+read-only. Repair accepts only a `PAUSED`/`APPLYING`, exact one-message
+checkpoint; it checks the immutable queue entry, content type, Apps Script
+integrity marker, byte count, and full SHA-256 before conditionally creating
+the deterministic commit. It never fetches Gmail, overwrites an object, edits
+Script Properties, or advances the cursor. On resume, ordinary replay
+validation merges the commit into the catalog and advances state.
+
+If inspection reports that the canonical object is absent, run
+`make external-select-s3-blocked`, open and download that exact Gmail message
+as `.eml`, and run `make external-select-download` plus
+`make external-local-check`. Then use:
+
+```sh
+make external-import-s3-blocked CONFIRM=external-import-s3-blocked
+```
+
+The importer re-reads the paused checkpoint and requires its selected Gmail ID
+to match, conditionally creates the canonical `.eml` with the native Apps
+Script marker, re-downloads and hashes it, and only then publishes the commit.
+It is replay-safe if interrupted on either side of the object/commit boundary.
+
 ### S3 precondition or conflict failure
 
 Do not manually overwrite the named object. The in-flight checkpoint remains

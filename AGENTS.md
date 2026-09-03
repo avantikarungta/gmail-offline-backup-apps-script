@@ -197,6 +197,14 @@ the Apps Script queue/catalog has advanced. Do not promote it into a full
 backup path without implementing independent durable state, commits, catalog,
 verification, and cutover semantics.
 
+The production `external-*-s3-blocked` recovery is narrower: it may bridge one
+exact `PAUSED` one-message checkpoint into the existing transaction only after
+validating the immutable queue, canonical key, Apps Script integrity marker,
+full stored bytes, and SHA-256. Its import variant requires the queue-selected
+Gmail ID and a locally validated browser download, uses create-only writes for
+both object and commit, and leaves catalog merge/cursor advancement to normal
+Apps Script replay. Never run it against an active checkpoint.
+
 ## Git and Public Repository Hygiene
 
 The canonical remote is:

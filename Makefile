@@ -266,6 +266,20 @@ external-select-download: ## Select exactly one recent browser-downloaded EML in
 external-local-check: ## Validate and hash the selected local EML without printing its path or content.
 	@EXTERNAL_ENV="$(EXTERNAL_ENV)" "$(NODE)" scripts/external-r2.js local-check
 
+external-inspect-s3-blocked: ## Validate a paused one-message R2 checkpoint and its canonical object without writing.
+	@EXTERNAL_ENV="$(EXTERNAL_ENV)" "$(NODE)" scripts/external-r2.js inspect-s3-blocked
+
+external-select-s3-blocked: ## Select the exact paused R2 queue entry in ignored EXTERNAL_ENV.
+	@EXTERNAL_ENV="$(EXTERNAL_ENV)" "$(NODE)" scripts/external-r2.js select-s3-blocked
+
+external-repair-s3-blocked: ## Publish a verified missing one-message APPLY commit; requires exact confirmation.
+	@test "$(CONFIRM)" = "external-repair-s3-blocked" || { echo "Refusing. Re-run with CONFIRM=external-repair-s3-blocked." >&2; exit 2; }
+	@EXTERNAL_ENV="$(EXTERNAL_ENV)" CONFIRM="$(CONFIRM)" "$(NODE)" scripts/external-r2.js repair-s3-blocked
+
+external-import-s3-blocked: ## Canonically import the selected EML and commit it; requires exact confirmation.
+	@test "$(CONFIRM)" = "external-import-s3-blocked" || { echo "Refusing. Re-run with CONFIRM=external-import-s3-blocked." >&2; exit 2; }
+	@EXTERNAL_ENV="$(EXTERNAL_ENV)" CONFIRM="$(CONFIRM)" "$(NODE)" scripts/external-r2.js import-s3-blocked
+
 external-r2-probe: ## Write/read/delete an isolated R2 probe; requires CONFIRM=external-r2-probe.
 	@test "$(CONFIRM)" = "external-r2-probe" || { echo "Refusing. Re-run with CONFIRM=external-r2-probe." >&2; exit 2; }
 	@EXTERNAL_ENV="$(EXTERNAL_ENV)" CONFIRM="$(CONFIRM)" "$(NODE)" scripts/external-r2.js probe-r2
