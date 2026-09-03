@@ -438,7 +438,7 @@ function listCanonical(folder) {
   assert.strictEqual(sandbox.__BACKUP_CONFIG.DRIVE_WRITE_MODE, 'PARALLEL_API');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.ARCHIVE_ENCODING, 'ZIP');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_MAX_PARALLEL_BYTES, 8 * 1024 * 1024);
-  assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_APPLY_BATCH_SIZE, 5);
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_APPLY_BATCH_SIZE, 1);
   assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.14');
 
   // SigV4 requests never expose credentials in URLs and sign all required
@@ -1183,12 +1183,12 @@ function listCanonical(folder) {
   assert(batchSize >= 1 && batchSize <= sandbox.__BACKUP_CONFIG.INITIAL_APPLY_BATCH_SIZE);
   const s3ApplyRuntime = sandbox.GmailBackupLibrary.createRuntime({config: {
     STORAGE_BACKEND: 'S3',
-    S3_APPLY_BATCH_SIZE: 5,
+    S3_APPLY_BATCH_SIZE: 1,
   }});
   sandbox.GmailBackupLibrary.withRuntime(s3ApplyRuntime, function () {
-    assert.strictEqual(sandbox.applyBatchSizeLimit_(), 5);
-    assert.strictEqual(sandbox.applyReplayBatchEnd_(5, 25), 10);
-    assert(sandbox.chooseApplyBatchSize_({apply: {ewmaMsPerMessage: 250}}, Date.now(), 100) <= 5);
+    assert.strictEqual(sandbox.applyBatchSizeLimit_(), 1);
+    assert.strictEqual(sandbox.applyReplayBatchEnd_(5, 25), 6);
+    assert.strictEqual(sandbox.chooseApplyBatchSize_({apply: {ewmaMsPerMessage: 250}}, Date.now(), 100), 1);
   });
 
   const commit = {

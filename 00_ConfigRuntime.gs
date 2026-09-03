@@ -53,7 +53,7 @@ const BACKUP_CONFIG = Object.freeze({
   S3_MAX_PARALLEL_BYTES: 8 * 1024 * 1024,
   // Bound the number of raw Gmail responses retained by one S3 transaction.
   // A crashed larger checkpoint is replay-safely split to this size.
-  S3_APPLY_BATCH_SIZE: 5,
+  S3_APPLY_BATCH_SIZE: 1,
   S3_MULTIPART_THRESHOLD_BYTES: 32 * 1024 * 1024,
   S3_MULTIPART_PART_BYTES: 8 * 1024 * 1024,
   S3_PROBE_MULTIPART: false,
