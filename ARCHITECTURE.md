@@ -41,6 +41,7 @@ The supported default is one copied Apps Script project per mailbox.
 | `45_Audit.gs` | archive/catalog audit and exact remaining delta |
 | `50_Queue.gs` | immutable ordered work queue and queue transactions |
 | `60_Export.gs` | RAW export, ZIP encoding, commits, replay, catalog merge |
+| `62_DeadLetterQueue.gs` | durable per-message attempts, DLQ evidence, commit validation |
 | `65_PlanEstimate.gs` | exact-delta queue sampling, payload/rate modeling, durable PLAN estimate |
 | `70_DiagnosticsSupport.gs` | benchmarks, estimators, structured metrics/logs |
 | `80_StateStatus.gs` | state schema, status/ETA, pause flags, trigger lifecycle |
@@ -187,17 +188,28 @@ Outputs the exact current remaining delta and anomaly counts.
 For each bounded queue range:
 
 1. Persist `inFlight` to Script Properties.
-2. Fetch each Gmail message in RAW format.
-3. Decode raw bytes and calculate the raw-message SHA-256.
-4. ZIP the raw message, calculate the stored-file SHA-256, then reuse a
+2. Persist the next attempt number immediately before Gmail access.
+3. Fetch each Gmail message in RAW format.
+4. Decode raw bytes and calculate the raw-message SHA-256.
+5. ZIP the raw message, calculate the stored-file SHA-256, then reuse a
    matching canonical `.eml`/`.eml.zip` file or create the ZIP.
-5. Write a deterministic batch commit.
-6. Merge records into each affected catalog shard.
-7. Advance queue segment/offset and clear `inFlight`.
+6. Write a deterministic batch commit.
+7. Merge records into each affected catalog shard.
+8. Advance queue segment/offset and clear `inFlight`.
+
+If an exact one-message checkpoint starts three attempts without publishing a
+valid commit, the alternate transaction writes/upserts that Gmail ID in the
+plan's `dead-letter-queue.json`, writes a deterministic `dead-lettered` commit,
+merges its marker into the catalog, then advances. Only the DLQ file is written
+before the commit; the cursor cannot advance from DLQ evidence alone.
 
 ### Crash windows
 
-- **Before file creation:** retry same range.
+- **Before file creation:** retry the same range with a pre-persisted attempt
+  count; hard VM termination cannot evade the limit.
+- **Repeated failure:** split replay to one exact queue entry, durably write its
+  DLQ evidence, then commit and advance. A subsequent PLAN treats the
+  `dead-lettered` catalog marker as missing and requeues it.
 - **After some files, before commit:** re-fetch and SHA-256-check existing files.
 - **After commit, before catalog:** validate files and replay commit.
 - **Oversized S3 replay:** a local recovery may publish a create-only,
@@ -226,6 +238,7 @@ scan journals
 work queues
 queue-seen sets
 transaction commits
+dead-letter queue evidence
 status files
 ```
 

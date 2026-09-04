@@ -1,6 +1,16 @@
 # Changelog
 
-## 1.3.0-dev.14 — staging
+## 1.3.0-dev.15 — staging
+
+- Persisted each APPLY attempt before Gmail RAW retrieval so hard Apps Script
+  termination, including V8 out-of-memory, cannot evade retry accounting.
+- Isolated failed replay checkpoints to one message and, after three durable
+  attempts, transactionally recorded that exact Gmail ID in the per-plan
+  `dead-letter-queue.json` before committing and advancing past it.
+- Added dead-letter counters, checkpoint attempt visibility, structured events,
+  replay/idempotence validation, and automatic requeueing by the next PLAN.
+
+## 1.3.0-dev.14 — 2026-09-04
 
 - Added a complete S3-compatible backend for AWS S3, Cloudflare R2, and probed
   compatible endpoints, including SigV4, virtual folders, conditionals,

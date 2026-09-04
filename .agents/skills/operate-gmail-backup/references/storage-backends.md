@@ -22,6 +22,9 @@ Use provider-neutral logical keys for canonical messages, commits, catalog pages
 - Make manifest, commit, and catalog publication conditional or create-only where possible.
 - Treat exact `HEAD` results, content lengths, hashes, and entity versions as the basis for idempotency.
 - Preserve in-flight checkpoints before external writes and replay the same logical key after a crash.
+- Store the per-plan dead-letter queue through the same provider-neutral folder
+  adapter, before publishing its `dead-lettered` commit; never treat that
+  marker as a healthy canonical object.
 - Quarantine mismatched existing objects rather than silently overwriting them.
 - Keep payload hashes independent of transport encoding and validate after upload.
 - Redact authorization headers, signed URLs, security tokens, access keys, message data, and endpoints containing credentials from logs.

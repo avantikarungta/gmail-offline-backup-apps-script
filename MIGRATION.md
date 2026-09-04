@@ -1,5 +1,19 @@
 # Migration Guide
 
+## From 1.3.0-dev.14 to 1.3.0-dev.15
+
+1. Checkpoint-safely pause an active APPLY, run `make validate`, inspect
+   `make files`, and push every numbered module, including the new
+   `62_DeadLetterQueue.gs`.
+2. Resume the preserved plan. Existing version-2 in-flight checkpoints remain
+   valid and are treated as having started one prior attempt.
+3. No archive migration or new PLAN is required. After three durable attempts,
+   one exact failing queue ID is recorded in the plan's
+   `dead-letter-queue.json`, committed as `dead-lettered`, and skipped.
+4. A later PLAN deliberately requeues dead-lettered IDs because only an
+   `exported` catalog record with a healthy canonical object counts as backed
+   up.
+
 ## From 1.3.0-dev.13 to 1.3.0-dev.14
 
 1. Run `make configure SCRIPT_ID=YOUR_EXISTING_SCRIPT_ID` so the ignored clasp

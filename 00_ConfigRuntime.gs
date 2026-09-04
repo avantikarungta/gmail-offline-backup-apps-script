@@ -28,7 +28,7 @@
  */
 
 const BACKUP_CONFIG = Object.freeze({
-  VERSION: '1.3.0-dev.14',
+  VERSION: '1.3.0-dev.15',
 
   // Archive storage. GOOGLE_DRIVE preserves the existing behavior. S3 uses
   // the S3-compatible API and works with AWS S3, Cloudflare R2, and compatible
@@ -105,6 +105,13 @@ const BACKUP_CONFIG = Object.freeze({
   // remaining execution budget is small or observed messages are slow.
   APPLY_BATCH_SIZE: 20,
   INITIAL_APPLY_BATCH_SIZE: 5,
+  // A failed multi-message checkpoint is replayed one message at a time so a
+  // single poison/oversized message can never dead-letter healthy neighbors.
+  APPLY_REPLAY_BATCH_SIZE: 1,
+  // Attempts are persisted before Gmail RAW retrieval. This catches hard V8
+  // termination (including out-of-memory), which bypasses JavaScript catch.
+  APPLY_MAX_MESSAGE_ATTEMPTS: 3,
+  DEAD_LETTER_FILE: 'dead-letter-queue.json',
   DEFAULT_ESTIMATED_MS_PER_MESSAGE: 1500,
   CHECKPOINT_SAFETY_MS: 45 * 1000,
 

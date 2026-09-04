@@ -334,6 +334,7 @@ const expectedModuleFiles = [
   '45_Audit.gs',
   '50_Queue.gs',
   '60_Export.gs',
+  '62_DeadLetterQueue.gs',
   '65_PlanEstimate.gs',
   '70_DiagnosticsSupport.gs',
   '80_StateStatus.gs',
@@ -377,6 +378,7 @@ const code = moduleSources.map(module => module.source).join('\n') +
 vm.runInContext(code, sandbox, {filename: 'GmailBackupModules.gs'});
 
 const defaultGmailMessagesList = sandbox.Gmail.Users.Messages.list;
+const defaultGmailMessagesGet = sandbox.Gmail.Users.Messages.get;
 const defaultGmailGetProfile = sandbox.Gmail.Users.getProfile;
 
 function base64url(buffer) {
@@ -434,13 +436,15 @@ function listCanonical(folder) {
     )).map(x => x.id),
     ['d1', 's1', 'd2', 's2']
   );
-  assert.strictEqual(sandbox.__BACKUP_CONFIG.VERSION, '1.3.0-dev.14');
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.VERSION, '1.3.0-dev.15');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.DRIVE_WRITE_MODE, 'PARALLEL_API');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.ARCHIVE_ENCODING, 'ZIP');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_MAX_PARALLEL_BYTES, 8 * 1024 * 1024);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_APPLY_BATCH_SIZE, 1);
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.APPLY_REPLAY_BATCH_SIZE, 1);
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.APPLY_MAX_MESSAGE_ATTEMPTS, 3);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_REPLAY_FULL_HASH_MAX_BYTES, 8 * 1024 * 1024);
-  assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.14');
+  assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.15');
 
   // SigV4 requests never expose credentials in URLs and sign all required
   // S3 headers. The XML parser covers paginated objects and virtual folders.
@@ -1199,6 +1203,17 @@ function listCanonical(folder) {
   };
   sandbox.validateCommit_(commit, 'plan-1', 'ab', 0, 2, [{id: 'a'}, {id: 'b'}]);
   assert.throws(() => sandbox.validateCommit_(commit, 'plan-1', 'ab', 0, 2, [{id: 'b'}, {id: 'a'}]));
+  sandbox.validateCommit_({
+    schemaVersion: 3,
+    planId: 'plan-1',
+    queueSegment: 0,
+    start: 0,
+    endExclusive: 1,
+    summary: {processed: 1, deadLettered: 1},
+    records: [{id: 'poison', status: 'dead-lettered'}],
+  }, 'plan-1', 0, 0, 1, [{id: 'poison'}]);
+  assert.strictEqual(sandbox.applyAttemptCount_({schemaVersion: 2}), 1);
+  assert.strictEqual(sandbox.applyAttemptCount_({schemaVersion: 3, attemptCount: 2}), 2);
 
   addMessage('abc001', 'From: a@example.com\r\nTo: b@example.com\r\nSubject: One\r\n\r\nHello');
   addMessage('abc002', 'From: c@example.com\r\nTo: d@example.com\r\nSubject: Two\r\n\r\nWorld', ['SENT']);
@@ -1954,6 +1969,102 @@ function listCanonical(folder) {
   assert(txCatalog.files.some(file => file.getName() === 'shard-01.json'));
   assert(txCatalog.files.some(file => file.getName() === 'shard-02.json'));
 
+  // A hard per-message failure is counted before Gmail RAW retrieval, even if
+  // the VM would terminate before JavaScript catch/finally can run. After the
+  // bounded attempts, durable DLQ evidence precedes the commit and cursor.
+  const dlqRoot = new MockFolder('dead-letter-root');
+  dlqRoot.createFolder('data');
+  const dlqCatalog = dlqRoot.createFolder('catalog');
+  const dlqPlans = dlqRoot.createFolder('plans');
+  const dlqPlanFolder = dlqPlans.createFolder('dlq-plan');
+  dlqPlanFolder.createFolder('remaining-shards');
+  const dlqCommits = dlqPlanFolder.createFolder('commits');
+  const dlqWorkQueue = dlqPlanFolder.createFolder('work-queue');
+  dlqPlanFolder.createFolder('mailbox-shards');
+  dlqPlanFolder.createFolder('audit');
+  dlqWorkQueue.createFile('segment-00000000.json', JSON.stringify({
+    schemaVersion: 1,
+    planId: 'dlq-plan',
+    applyOrder: 'NEWEST_FIRST',
+    segmentIndex: 0,
+    entries: [{id: 'poison0001', threadId: 'thread-poison0001'}],
+  }), 'text/plain');
+  const dlqState = sandbox.newBaseState_(dlqRoot.getId());
+  dlqState.phase = 'APPLYING';
+  dlqState.account = 'user@example.com';
+  dlqState.plan = {
+    id: 'dlq-plan',
+    folderId: dlqPlanFolder.getId(),
+    commitsFolderId: dlqCommits.getId(),
+    workQueueFolderId: dlqWorkQueue.getId(),
+  };
+  dlqState.queue = sandbox.newQueueState_();
+  dlqState.queue.total = 1;
+  dlqState.queue.queued = 1;
+  dlqState.queue.segmentIndex = 1;
+  dlqState.queue.completedAt = new Date().toISOString();
+  dlqState.apply = sandbox.newApplyState_();
+  dlqState.apply.total = 1;
+  dlqState.apply.startedAt = new Date().toISOString();
+  sandbox.Gmail.Users.Messages.get = function (user, id, params) {
+    if (id === 'poison0001') throw new Error('Out of memory error.');
+    return defaultGmailMessagesGet(user, id, params);
+  };
+  for (let attempt = 1; attempt <= sandbox.__BACKUP_CONFIG.APPLY_MAX_MESSAGE_ATTEMPTS; attempt++) {
+    assert.throws(() => sandbox.processApplySlice_(dlqState, Date.now()), /Out of memory/);
+    assert(dlqState.apply.inFlight, 'failed message must retain its exact checkpoint');
+    assert.strictEqual(dlqState.apply.inFlight.attemptCount, attempt);
+    assert.strictEqual(dlqState.apply.processed, 0);
+  }
+
+  const dlqCommitFolder = dlqCommits.folders.find(f => f.name === 'segment-00000000');
+  const originalDlqCommitCreate = dlqCommitFolder.createFile.bind(dlqCommitFolder);
+  let failDlqCommitOnce = true;
+  dlqCommitFolder.createFile = function (name, content, mimeType) {
+    if (failDlqCommitOnce) {
+      failDlqCommitOnce = false;
+      throw new Error('injected crash after DLQ write');
+    }
+    return originalDlqCommitCreate(name, content, mimeType);
+  };
+  assert.throws(() => sandbox.processApplySlice_(dlqState, Date.now()), /injected crash after DLQ write/);
+  assert.strictEqual(dlqState.apply.processed, 0, 'DLQ file alone must not advance APPLY');
+  const dlqFile = dlqPlanFolder.files.find(file => file.name === sandbox.__BACKUP_CONFIG.DEAD_LETTER_FILE);
+  assert(dlqFile, 'DLQ evidence must exist before its commit');
+  let dlqDocument = JSON.parse(dlqFile.getBlob().getDataAsString());
+  assert.strictEqual(dlqDocument.count, 1);
+  assert.strictEqual(dlqDocument.entries[0].id, 'poison0001');
+  assert.strictEqual(dlqDocument.entries[0].attemptCount, 3);
+
+  let failDlqCatalogOnce = true;
+  sandbox.mergeCommitIntoCatalog_ = function (...args) {
+    if (failDlqCatalogOnce) {
+      failDlqCatalogOnce = false;
+      throw new Error('injected crash after DLQ commit');
+    }
+    return originalMerge.apply(this, args);
+  };
+  assert.throws(() => sandbox.processApplySlice_(dlqState, Date.now()), /injected crash after DLQ commit/);
+  assert.strictEqual(dlqState.apply.processed, 0, 'DLQ commit alone must not advance APPLY');
+  assert.strictEqual(dlqCommitFolder.files.length, 1);
+  sandbox.mergeCommitIntoCatalog_ = originalMerge;
+  sandbox.processApplySlice_(dlqState, Date.now());
+  sandbox.Gmail.Users.Messages.get = defaultGmailMessagesGet;
+  assert.strictEqual(dlqState.phase, 'COMPLETE');
+  assert.strictEqual(dlqState.apply.processed, 1);
+  assert.strictEqual(dlqState.apply.exported, 0);
+  assert.strictEqual(dlqState.apply.gone, 0);
+  assert.strictEqual(dlqState.apply.deadLettered, 1);
+  assert.strictEqual(dlqState.apply.inFlight, null);
+  dlqDocument = JSON.parse(dlqFile.getBlob().getDataAsString());
+  assert.strictEqual(dlqDocument.count, 1, 'DLQ replay must upsert rather than duplicate the Gmail ID');
+  const dlqCatalogFile = dlqCatalog.files.find(file => file.name === 'shard-' + sandbox.shardForId_('poison0001') + '.json');
+  const dlqCatalogRecords = JSON.parse(dlqCatalogFile.getBlob().getDataAsString());
+  assert.strictEqual(dlqCatalogRecords[0].status, 'dead-lettered');
+  assert.strictEqual(sandbox.canonicalArchiveHealth_(null, dlqCatalogRecords[0]).ok, false);
+  assert.match(sandbox.formatStatusText_(dlqState), /dead-lettered 1/);
+  assert.match(sandbox.formatStatusText_(dlqState), /not yet backed up/);
+
   // Public setup anchors one exact Drive root and is idempotent on rerun.
   // Restore the baseline Gmail mocks after the scan-order fault-injection tests.
   sandbox.Gmail.Users.Messages.list = defaultGmailMessagesList;
@@ -2005,7 +2116,7 @@ function listCanonical(folder) {
     : null;
   const statusWritesBefore = statusTextFile ? statusTextFile.setContentCalls : 0;
   const machineStatus = sandbox.agentStatus();
-  assert.strictEqual(machineStatus.exporterVersion, '1.3.0-dev.14');
+  assert.strictEqual(machineStatus.exporterVersion, '1.3.0-dev.15');
   assert.strictEqual(
     statusTextFile ? statusTextFile.setContentCalls : 0,
     statusWritesBefore,

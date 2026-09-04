@@ -1,4 +1,4 @@
-# Release Validation — 1.3.0-dev.14
+# Release Validation — 1.3.0-dev.15
 
 ## Automated checks performed
 
@@ -35,6 +35,10 @@
 - raw-message idempotency, corruption quarantine, and replacement;
 - mixed-shard APPLY commit/catalog merge;
 - crash after APPLY commit creation and replay without duplicate canonical files.
+- legacy in-flight checkpoint compatibility and durable pre-Gmail attempt counts;
+- one-message replay isolation, bounded retry exhaustion, and DLQ publication;
+- crash after DLQ evidence but before commit, followed by idempotent replay;
+- dead-letter catalog markers remaining unhealthy for a future PLAN.
 - ZIP compression and exact ZIP→EML SHA-256 round trips;
 - mixed legacy `.eml` and new `.eml.zip` archives;
 - runtime configuration isolation and injected logging;

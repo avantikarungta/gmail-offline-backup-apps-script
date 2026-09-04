@@ -77,11 +77,13 @@ function processApplySlice_(state, executionStartedMs) {
       if (batchSize <= 0) break;
       endExclusive = Math.min(entries.length, start + batchSize);
       state.apply.inFlight = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         planId: state.plan.id,
         segmentIndex: segmentIndex,
         start: start,
         endExclusive: endExclusive,
+        attemptCount: 0,
+        lastAttemptAt: null,
         createdAt: isoNow_(),
       };
       state.updatedAt = isoNow_();
@@ -108,6 +110,9 @@ function processApplySlice_(state, executionStartedMs) {
       state.apply.inFlight.endExclusive = endExclusive;
       state.apply.inFlight.replaySplitFromEndExclusive = originalEndExclusive;
       state.apply.inFlight.replaySplitAt = isoNow_();
+      state.apply.inFlight.schemaVersion = 3;
+      state.apply.inFlight.attemptCount = 0;
+      state.apply.inFlight.lastAttemptAt = null;
       state.updatedAt = isoNow_();
       measureOperation_(metrics, 'checkpointPersist', function () { saveState_(state); });
       logProgressEvent_('APPLY_REPLAY_BATCH_SPLIT', state, {
@@ -130,18 +135,25 @@ function processApplySlice_(state, executionStartedMs) {
           backupConfig_().EXECUTION_BUDGET_MS - backupConfig_().CHECKPOINT_SAFETY_MS) {
         break;
       }
-      const batchStartedMs = Date.now();
-      commit = exportQueueBatch_(
-        state,
-        layout,
-        segmentIndex,
-        start,
-        endExclusive,
-        batchEntries,
-        context
-      );
-      commit.durationMs = Date.now() - batchStartedMs;
-      commit.finishedAt = isoNow_();
+      if (shouldDeadLetterInFlight_(state.apply.inFlight)) {
+        commit = measureOperation_(metrics, 'driveDeadLetterWrite', function () {
+          return buildDeadLetterCommit_(state, segmentIndex, start, endExclusive, batchEntries);
+        });
+      } else {
+        beginApplyAttempt_(state);
+        const batchStartedMs = Date.now();
+        commit = exportQueueBatch_(
+          state,
+          layout,
+          segmentIndex,
+          start,
+          endExclusive,
+          batchEntries,
+          context
+        );
+        commit.durationMs = Date.now() - batchStartedMs;
+        commit.finishedAt = isoNow_();
+      }
       commitFile = measureOperation_(metrics, 'driveCommitWrite', function () {
         return segmentCommitsFolder.createFile(commitName, JSON.stringify(commit), 'text/plain');
       });
@@ -186,6 +198,7 @@ function loadValidApplyCommit_(
   try {
     const commit = readJsonFile_(commitFile, null);
     validateCommit_(commit, state.plan.id, segmentIndex, start, endExclusive, batchEntries);
+    validateDeadLetterCommitEvidence_(state, commit);
     if (backupConfig_().VERIFY_REPLAYED_COMMITS) {
       const validation = validateCommittedFiles_(commit, layout);
       if (!validation.ok) {
@@ -595,49 +608,6 @@ function createArchiveFileWithIntegrity_(folder, blob, archive) {
   return file;
 }
 
-function validateCommit_(commit, planId, location, start, endExclusive, expectedEntries) {
-  const isQueueCommit = commit && commit.queueSegment !== undefined && commit.queueSegment !== null;
-  const locationMatches = isQueueCommit
-    ? Number(commit.queueSegment) === Number(location)
-    : commit && String(commit.shard) === String(location);
-  if (!commit || commit.planId !== planId || !locationMatches ||
-      Number(commit.start) !== Number(start) || Number(commit.endExclusive) !== Number(endExclusive)) {
-    throw new Error('Commit checkpoint does not match the requested batch: location=' + location + ', start=' + start);
-  }
-  const records = commit.records || [];
-  const expected = Number(endExclusive) - Number(start);
-  if (records.length !== expected || Number((commit.summary || {}).processed) !== expected) {
-    throw new Error('Commit checkpoint has an invalid record count for location=' + location + ', start=' + start);
-  }
-  const seen = {};
-  records.forEach(function (record, index) {
-    if (!record || !record.id || seen[record.id]) {
-      throw new Error('Commit checkpoint contains a missing or duplicate Gmail ID.');
-    }
-    if (record.status !== 'exported' && record.status !== 'gone') {
-      throw new Error('Commit checkpoint contains an invalid status for Gmail ID ' + record.id);
-    }
-    if (expectedEntries && (!expectedEntries[index] || expectedEntries[index].id !== record.id)) {
-      throw new Error('Commit checkpoint Gmail IDs do not match the frozen plan range.');
-    }
-    seen[record.id] = true;
-  });
-}
-
-function validateInFlight_(inFlight, planId, location, start, entryCount) {
-  const locationMatches = inFlight && inFlight.segmentIndex !== undefined
-    ? Number(inFlight.segmentIndex) === Number(location)
-    : inFlight && String(inFlight.shard) === String(location);
-  if (!inFlight || inFlight.planId !== planId || !locationMatches ||
-      Number(inFlight.start) !== Number(start)) {
-    throw new Error('In-flight apply checkpoint does not match current state: ' + JSON.stringify(inFlight));
-  }
-  const end = Number(inFlight.endExclusive);
-  if (!Number.isFinite(end) || end <= Number(start) || end > Number(entryCount)) {
-    throw new Error('In-flight apply checkpoint has an invalid end offset: ' + JSON.stringify(inFlight));
-  }
-}
-
 function chooseApplyBatchSize_(state, executionStartedMs, remainingInShard) {
   const elapsed = Date.now() - executionStartedMs;
   const usableMs = backupConfig_().EXECUTION_BUDGET_MS - elapsed - backupConfig_().CHECKPOINT_SAFETY_MS;
@@ -657,7 +627,10 @@ function applyBatchSizeLimit_() {
 }
 
 function applyReplayBatchEnd_(start, endExclusive) {
-  return Math.min(Number(endExclusive), Number(start) + applyBatchSizeLimit_());
+  return Math.min(
+    Number(endExclusive),
+    Number(start) + Math.max(1, Number(backupConfig_().APPLY_REPLAY_BATCH_SIZE || 1))
+  );
 }
 
 function validateCommittedFiles_(commit, layout) {
@@ -1056,6 +1029,8 @@ function advanceApplyStateFromCommit_(state, commit) {
   const durationMs = Math.max(1, Number(commit.durationMs || 1));
   const exported = Number(summary.exported || 0);
   const gone = Number(summary.gone || 0);
+  const deadLettered = Number(summary.deadLettered || 0);
+  const measuredProcessed = Math.max(0, processed - deadLettered);
   const bytes = Number(summary.rawBytes || 0);
   const storedBytes = Number(summary.storedBytes || summary.rawBytes || 0);
   const now = isoNow_();
@@ -1064,20 +1039,21 @@ function advanceApplyStateFromCommit_(state, commit) {
   state.apply.processed = Number(state.apply.processed || 0) + processed;
   state.apply.exported = Number(state.apply.exported || 0) + exported;
   state.apply.gone = Number(state.apply.gone || 0) + gone;
+  state.apply.deadLettered = Number(state.apply.deadLettered || 0) + deadLettered;
   state.apply.rawBytes = Number(state.apply.rawBytes || 0) + bytes;
   state.apply.storedBytes = Number(state.apply.storedBytes || 0) + storedBytes;
   state.apply.batches = Number(state.apply.batches || 0) + 1;
   state.apply.activeRuntimeMs = Number(state.apply.activeRuntimeMs || 0) + durationMs;
 
-  if (processed > 0) {
-    const sampleMsPerMessage = durationMs / processed;
+  if (measuredProcessed > 0) {
+    const sampleMsPerMessage = durationMs / measuredProcessed;
     state.apply.ewmaMsPerMessage = ewma_(state.apply.ewmaMsPerMessage, sampleMsPerMessage, 0.25);
 
     if (priorProgressAt) {
       const priorMs = Date.parse(priorProgressAt);
       if (Number.isFinite(priorMs)) {
         const wallDeltaMs = Math.max(1, Date.now() - priorMs);
-        const wallSampleMsPerMessage = wallDeltaMs / processed;
+        const wallSampleMsPerMessage = wallDeltaMs / measuredProcessed;
         state.apply.ewmaWallMsPerMessage = ewma_(state.apply.ewmaWallMsPerMessage, wallSampleMsPerMessage, 0.15);
       }
     }

@@ -79,6 +79,7 @@ function newApplyState_() {
     processed: 0,
     exported: 0,
     gone: 0,
+    deadLettered: 0,
     rawBytes: 0,
     storedBytes: 0,
     batches: 0,
@@ -297,7 +298,7 @@ function progressForState_(state) {
       current: current,
       total: total,
       percent: total === 0 ? 100 : clamp_(100 * current / total, 0, phase === BACKUP_PHASE.COMPLETE ? 100 : 99.9),
-      label: 'messages applied',
+      label: 'queue entries processed',
     };
   }
 
@@ -435,6 +436,7 @@ function formatStatusText_(state) {
     lines.push('Apply: processed ' + state.apply.processed + '/' + state.apply.total +
       ', exported ' + state.apply.exported +
       ', vanished ' + state.apply.gone +
+      ', dead-lettered ' + Number(state.apply.deadLettered || 0) +
       ', raw ' + formatBytes_(state.apply.rawBytes) +
       ', stored ' + formatBytes_(storedBytes));
     if (status.estimatedApplyBytesText) lines.push('Estimated payload for this APPLY plan: ' + status.estimatedApplyBytesText);
@@ -447,7 +449,13 @@ function formatStatusText_(state) {
     }
     if (state.apply.inFlight) {
       lines.push('In-flight checkpoint: queue segment ' + state.apply.inFlight.segmentIndex +
-        ', offsets [' + state.apply.inFlight.start + ', ' + state.apply.inFlight.endExclusive + ')');
+        ', offsets [' + state.apply.inFlight.start + ', ' + state.apply.inFlight.endExclusive + ')' +
+        ', durable attempts ' + applyAttemptCount_(state.apply.inFlight) + '/' +
+        Number(backupConfig_().APPLY_MAX_MESSAGE_ATTEMPTS));
+    }
+    if (Number(state.apply.deadLettered || 0) > 0) {
+      lines.push('Dead-letter queue: ' + backupConfig_().DEAD_LETTER_FILE +
+        ' (' + Number(state.apply.deadLettered || 0) + ' message(s) not yet backed up; a fresh PLAN will requeue them)');
     }
   }
   if (state.phase === BACKUP_PHASE.PLANNED) lines.push('Next action: review plan.json, then run applyBackup().');

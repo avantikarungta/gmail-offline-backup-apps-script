@@ -132,6 +132,20 @@ On a retry, the exporter hashes the raw message (extracting the sole ZIP entry w
 
 This is an expected crash window. The next worker validates/replays the deterministic commit, merges it idempotently, and then advances state.
 
+### A message repeatedly terminates the worker
+
+APPLY persists an attempt number before each Gmail RAW retrieval. A replayed
+multi-message checkpoint is first narrowed to one entry. If that exact message
+starts three attempts without publishing a valid commit, the worker upserts its
+ID and checkpoint metadata into the current plan's
+`dead-letter-queue.json`, publishes a `dead-lettered` commit, and continues.
+
+The DLQ is explicit incomplete-work evidence, not a successful backup. Do not
+delete or edit it during the plan. Status reports its count, and a later PLAN
+requeues every still-unhealthy ID because only a healthy canonical object with
+an `exported` catalog record counts as present. Investigate or externally
+recover those messages, then run the normal post-APPLY PLAN/verification loop.
+
 ### Old v1.0/v1.1 plan cannot APPLY
 
 Run a new `planBackup()` under 1.2.1. Existing canonical data/catalog records are retained and audited.
@@ -268,6 +282,14 @@ After each major run:
 ## Interpreting `gone`
 
 A message is recorded as `gone` when it was in the frozen work queue but `messages.get` returns not found at APPLY time. This may mean the message was deleted or became inaccessible. It counts as processed so one vanished ID cannot block the entire plan. A later PLAN recalculates the mailbox set.
+
+## Interpreting `dead-lettered`
+
+A `dead-lettered` message is still visible to Gmail but did not produce a valid
+commit within `APPLY_MAX_MESSAGE_ATTEMPTS`. It counts as processed only for the
+current immutable queue so other messages can continue. It does not count as
+backed up, remains listed in `dead-letter-queue.json`, and is intentionally
+selected again by the next PLAN unless externally recovered first.
 
 ## Quota behavior
 

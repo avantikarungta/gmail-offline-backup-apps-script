@@ -4,13 +4,15 @@
 
 function priorApplyPerformance_(state) {
   const apply = state && state.apply;
-  const processed = Math.max(0, Number(apply && apply.processed || 0));
+  const deadLettered = Math.max(0, Number(apply && apply.deadLettered || 0));
+  const processed = Math.max(0, Number(apply && apply.processed || 0) - deadLettered);
   if (!processed) return null;
   return {
     sourcePlanId: state.plan ? state.plan.id : null,
     processedMessages: processed,
     exportedMessages: Math.max(0, Number(apply.exported || 0)),
     goneMessages: Math.max(0, Number(apply.gone || 0)),
+    deadLetteredMessages: deadLettered,
     batches: Math.max(0, Number(apply.batches || 0)),
     activeRuntimeMs: Math.max(0, Number(apply.activeRuntimeMs || 0)),
     ewmaMsPerMessage: positiveNumberOrNull_(apply.ewmaMsPerMessage),

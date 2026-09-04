@@ -39,6 +39,13 @@ make plan-and-wait
 
 The final PLAN should converge to no remaining messages. Review status and logs before beginning another APPLY if it does not.
 
+During APPLY, status distinguishes `exported`, `gone`, and `deadLettered`.
+After three durable attempts without a valid one-message commit, the worker
+writes the exact ID to the plan's `dead-letter-queue.json` and continues. Treat
+that file as incomplete-work evidence: preserve it, investigate its IDs, and
+expect a fresh PLAN to requeue them until a healthy canonical object and
+`exported` catalog record exist.
+
 Completed PLAN automatically creates `plan-estimate.json`. Use its exact
 remaining count and sampled raw/stored payload, duration, and quota-day ranges
 for the pre-APPLY decision; `estimateBackup()` remains an optional quick preview
@@ -151,7 +158,7 @@ make open-script
 make open-logs
 ```
 
-Use `make status-human` only when refreshing the Drive status artifacts is desired. Capture timestamps, phase, counters, last error, and the nearest log entries when reporting a failure. Do not paste message bodies or credentials into issues or commits.
+Use `make status-human` only when refreshing the storage status artifacts is desired. Capture timestamps, phase, counters (including `deadLettered`), durable attempt count, last error, and the nearest log entries when reporting a failure. Do not paste message bodies, DLQ IDs, or credentials into issues or commits.
 
 ## Debugging And Recovery
 

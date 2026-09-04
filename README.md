@@ -1,13 +1,26 @@
 # Gmail Offline Backup for Google Apps Script
 
-**Release:** 1.3.0-dev.14
+**Release:** 1.3.0-dev.15
 **Purpose:** Create a resumable, verifiable offline Gmail archive when Google Takeout or IMAP is unavailable, but the user is authorized to access Gmail through Apps Script and the Gmail API.
 
 The exporter reads Gmail through the official Advanced Gmail service, writes complete RFC 2822 messages as one-entry `.eml.zip` files to Google Drive or an S3-compatible bucket, and records Gmail-only metadata in a sharded catalog. Existing plain `.eml` files remain valid in mixed archives. It never sends, labels, deletes, archives, forwards, or otherwise modifies Gmail.
 
 > Use this only for mail the account holder is permitted to retain. A technical ability to export data does not override company retention, confidentiality, or acceptable-use rules.
 
-## What is new in 1.3.0-dev.14
+## What is new in 1.3.0-dev.15
+
+- APPLY now persists an attempt counter immediately before each Gmail RAW read,
+  including across hard V8 termination where JavaScript exception handling
+  never runs.
+- A failed checkpoint is replayed as one exact message. After three durable
+  attempts, its Gmail ID is upserted into the plan's
+  `dead-letter-queue.json` before a deterministic `dead-lettered` commit is
+  published and the cursor advances.
+- Status exposes dead-letter counts and in-flight attempt counts. Dead-lettered
+  entries are not reported as backed up, and the next PLAN requeues them for a
+  later retry or external recovery.
+
+## What was added in 1.3.0-dev.14
 
 - Added a production S3-compatible archive adapter for AWS S3, Cloudflare R2,
   and compatible endpoints that pass the built-in capability probe.
@@ -108,6 +121,7 @@ Version 1.2.0 introduced durable chronological work queues, `NEWEST_FIRST` / `OL
 45_Audit.gs                   archive/catalog audit
 50_Queue.gs                   ordered durable work queue
 60_Export.gs                  ZIP export, commits, replay, and catalog merge
+62_DeadLetterQueue.gs         durable attempts, DLQ evidence, and validation
 65_PlanEstimate.gs            exact-delta PLAN payload/runtime estimation
 70_DiagnosticsSupport.gs      benchmarks, estimation, metrics, structured logs
 80_StateStatus.gs             state, status/ETA, pause, and triggers
@@ -490,6 +504,8 @@ Typical events include:
 ```text
 PLAN_STARTED
 APPLY_STARTED
+APPLY_ATTEMPT_STARTED
+APPLY_MESSAGE_DEAD_LETTERED
 WORKER_SLICE_STARTED
 WORKER_SLICE_COMPLETED
 WORKER_BACKOFF
@@ -505,11 +521,11 @@ Status includes:
 - scan pass, pages, rows, and page-token restarts;
 - archive audit totals/anomalies;
 - queue order, stage, queued count, segment count, and fallback count;
-- APPLY processed/exported/gone counts and bytes;
+- APPLY processed/exported/gone/dead-lettered counts and bytes;
 - active and wall-clock throughput;
 - ETA, confidence, basis, and estimated completion time;
 - retry backoff and last error;
-- exact in-flight checkpoint.
+- exact in-flight checkpoint and its durable attempt count.
 
 Set `LOG_PROGRESS_TO_CONSOLE: false` to suppress routine structured console events while retaining persisted status files and errors.
 
@@ -553,6 +569,7 @@ Gmail Offline Backup/
       queue.json
       plan-estimate.json
       apply-summary.json
+      dead-letter-queue.json  # present only after a message exhausts attempts
 
       mailbox-shards/
         shard-00.json ... shard-3f.json
@@ -619,6 +636,9 @@ WORK_QUEUE_SEGMENT_SIZE: 500,
 QUEUE_ROWS_PER_TRANSACTION: 5000,
 APPLY_BATCH_SIZE: 20,
 INITIAL_APPLY_BATCH_SIZE: 5,
+APPLY_REPLAY_BATCH_SIZE: 1,
+APPLY_MAX_MESSAGE_ATTEMPTS: 3,
+DEAD_LETTER_FILE: 'dead-letter-queue.json',
 ARCHIVE_ENCODING: 'ZIP',
 DRIVE_WRITE_MODE: 'PARALLEL_API',
 EXECUTION_BUDGET_MS: 4 * 60 * 1000,
@@ -802,7 +822,7 @@ All Gmail backup tests passed.
 All repository tooling tests passed.
 ```
 
-The suite covers raw-byte preservation, deterministic sharding, size/date estimation helpers, account isolation, two-pass scan union, durable scan-journal replay, newest-first queueing, global oldest-first ordering across multiple chunks, duplicate suppression, queue crash/replay, terminal summary retries, zero-delta APPLY, mixed-shard apply commits, corruption quarantine/replacement, catalog idempotence, and crash replay after commit creation.
+The suite covers raw-byte preservation, deterministic sharding, size/date estimation helpers, account isolation, two-pass scan union, durable scan-journal replay, newest-first queueing, global oldest-first ordering across multiple chunks, duplicate suppression, queue crash/replay, terminal summary retries, zero-delta APPLY, mixed-shard apply commits, corruption quarantine/replacement, catalog idempotence, crash replay after commit creation, and durable dead-letter replay after the DLQ-write/commit boundary.
 
 ## Residual limitations
 
@@ -815,7 +835,10 @@ The suite covers raw-byte preservation, deterministic sharding, size/date estima
   bucket/endpoint/prefix binding passes the real capability probe; validate
   AWS S3/R2 credentials and provider policy in the target account.
 - Apps Script, Gmail, Drive/S3, and organizational quotas/policies can interrupt or throttle work.
-- Exceptionally large raw messages may exceed Apps Script memory/response limits. Such a failure remains visible and resumable; the message is not silently marked complete.
+- Exceptionally large raw messages may exceed Apps Script memory/response
+  limits. After the durable attempt limit, the exact ID is recorded in the
+  plan's DLQ and APPLY continues; it remains explicitly not backed up and will
+  be requeued by the next PLAN.
 - PLAN validates committed identity, file location, and byte size, not a full SHA-256 pass over every existing file. Use `verifyBackupSample()` and perform an offline full-file hash verification after downloading.
 - Drive administrators may restrict download/sync even when Drive writes are allowed. Prove the offline-copy step early.
 - The exporter preserves message bytes and Gmail metadata but is not a turnkey mailbox viewer. Use an RFC-message-capable client or indexing tool for browsing the offline archive.

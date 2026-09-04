@@ -21,6 +21,7 @@
     "45_Audit.gs",
     "50_Queue.gs",
     "60_Export.gs",
+    "62_DeadLetterQueue.gs",
     "65_PlanEstimate.gs",
     "70_DiagnosticsSupport.gs",
     "80_StateStatus.gs",

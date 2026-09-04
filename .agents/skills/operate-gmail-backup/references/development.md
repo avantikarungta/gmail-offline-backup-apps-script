@@ -14,6 +14,11 @@ Preserve public entry-point names and the archive transaction sequence:
 
 Changes must remain replay-safe when execution stops after any step. Add compatibility tests for old state shapes and replay tests around each new persistence boundary.
 
+For per-message failure handling, persist attempt state before Gmail access,
+isolate replay to one immutable queue entry, write DLQ evidence before its
+commit, and advance only after the normal catalog/commit transaction. Never
+mark a dead-lettered record as exported; the next PLAN must requeue it.
+
 ## Edit And Test Loop
 
 Run:
