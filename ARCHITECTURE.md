@@ -197,6 +197,12 @@ For each bounded queue range:
 7. Merge records into each affected catalog shard.
 8. Advance queue segment/offset and clear `inFlight`.
 
+For S3-compatible storage, a new range contains at most eight messages. That
+range shares one commit, catalog merge, and final state checkpoint, while
+parallel upload payloads remain independently capped at 8 MiB. A range that
+fails before commit is reduced to one message on replay; batching therefore
+amortizes the healthy path without widening dead-letter scope.
+
 If an exact one-message checkpoint starts three attempts without publishing a
 valid commit, the alternate transaction writes/upserts that Gmail ID in the
 plan's `dead-letter-queue.json`, writes a deterministic `dead-lettered` commit,

@@ -1,4 +1,4 @@
-# Quick Start — Gmail Offline Backup 1.3.0-dev.15
+# Quick Start — Gmail Offline Backup 1.3.0-dev.16
 
 ## Install
 

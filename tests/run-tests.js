@@ -436,15 +436,15 @@ function listCanonical(folder) {
     )).map(x => x.id),
     ['d1', 's1', 'd2', 's2']
   );
-  assert.strictEqual(sandbox.__BACKUP_CONFIG.VERSION, '1.3.0-dev.15');
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.VERSION, '1.3.0-dev.16');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.DRIVE_WRITE_MODE, 'PARALLEL_API');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.ARCHIVE_ENCODING, 'ZIP');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_MAX_PARALLEL_BYTES, 8 * 1024 * 1024);
-  assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_APPLY_BATCH_SIZE, 1);
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_APPLY_BATCH_SIZE, 8);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.APPLY_REPLAY_BATCH_SIZE, 1);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.APPLY_MAX_MESSAGE_ATTEMPTS, 3);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_REPLAY_FULL_HASH_MAX_BYTES, 8 * 1024 * 1024);
-  assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.15');
+  assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.16');
 
   // SigV4 requests never expose credentials in URLs and sign all required
   // S3 headers. The XML parser covers paginated objects and virtual folders.
@@ -1188,12 +1188,12 @@ function listCanonical(folder) {
   assert(batchSize >= 1 && batchSize <= sandbox.__BACKUP_CONFIG.INITIAL_APPLY_BATCH_SIZE);
   const s3ApplyRuntime = sandbox.GmailBackupLibrary.createRuntime({config: {
     STORAGE_BACKEND: 'S3',
-    S3_APPLY_BATCH_SIZE: 1,
+    S3_APPLY_BATCH_SIZE: 8,
   }, services: {drive: sandbox.DriveApp}});
   sandbox.GmailBackupLibrary.withRuntime(s3ApplyRuntime, function () {
-    assert.strictEqual(sandbox.applyBatchSizeLimit_(), 1);
+    assert.strictEqual(sandbox.applyBatchSizeLimit_(), 8);
     assert.strictEqual(sandbox.applyReplayBatchEnd_(5, 25), 6);
-    assert.strictEqual(sandbox.chooseApplyBatchSize_({apply: {ewmaMsPerMessage: 250}}, Date.now(), 100), 1);
+    assert.strictEqual(sandbox.chooseApplyBatchSize_({apply: {ewmaMsPerMessage: 250}}, Date.now(), 100), 8);
   });
 
   const commit = {
@@ -2116,7 +2116,7 @@ function listCanonical(folder) {
     : null;
   const statusWritesBefore = statusTextFile ? statusTextFile.setContentCalls : 0;
   const machineStatus = sandbox.agentStatus();
-  assert.strictEqual(machineStatus.exporterVersion, '1.3.0-dev.15');
+  assert.strictEqual(machineStatus.exporterVersion, '1.3.0-dev.16');
   assert.strictEqual(
     statusTextFile ? statusTextFile.setContentCalls : 0,
     statusWritesBefore,

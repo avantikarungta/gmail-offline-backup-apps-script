@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0-dev.16 — staging
+
+- Increased bounded S3/R2 APPLY transactions from one message to eight so a
+  request wave shares one deterministic commit, catalog merge, and final
+  checkpoint write.
+- Kept upload payloads bounded by the independent eight-request/8 MiB wave
+  limits and retained one-message replay splitting so an oversized or poison
+  message cannot dead-letter healthy neighbors.
+
 ## 1.3.0-dev.15 — staging
 
 - Persisted each APPLY attempt before Gmail RAW retrieval so hard Apps Script

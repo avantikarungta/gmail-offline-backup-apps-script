@@ -1,5 +1,15 @@
 # Migration Guide
 
+## From 1.3.0-dev.15 to 1.3.0-dev.16
+
+1. Checkpoint-safely pause an active APPLY, run `make validate`, inspect
+   `make files`, and push the updated modules.
+2. Resume the preserved plan. An existing one-message `inFlight` checkpoint
+   finishes unchanged; subsequently opened S3/R2 ranges contain up to eight
+   messages.
+3. No archive migration or new PLAN is required. Failed multi-message ranges
+   still split to one message on replay before retry or dead-letter handling.
+
 ## From 1.3.0-dev.14 to 1.3.0-dev.15
 
 1. Checkpoint-safely pause an active APPLY, run `make validate`, inspect
