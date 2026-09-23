@@ -1,13 +1,24 @@
 # Gmail Offline Backup for Google Apps Script
 
-**Release:** 1.3.0-dev.17
+**Release:** 1.3.0-dev.18
 **Purpose:** Create a resumable, verifiable offline Gmail archive when Google Takeout or IMAP is unavailable, but the user is authorized to access Gmail through Apps Script and the Gmail API.
 
 The exporter reads Gmail through the official Advanced Gmail service, writes complete RFC 2822 messages as one-entry `.eml.zip` files to Google Drive or an S3-compatible bucket, and records Gmail-only metadata in a sharded catalog. Existing plain `.eml` files remain valid in mixed archives. It never sends, labels, deletes, archives, forwards, or otherwise modifies Gmail.
 
 > Use this only for mail the account holder is permitted to retain. A technical ability to export data does not override company retention, confidentiality, or acceptable-use rules.
 
-## What is new in 1.3.0-dev.17
+## What is new in 1.3.0-dev.18
+
+- Healthy S3/R2 transactions and small-request waves now contain up to 64
+  messages, reducing catalog/checkpoint fixed cost per message while retaining
+  the independent 8 MiB upload-memory ceiling.
+- Fresh single-writer queue ranges no longer spend a read on canonical objects
+  already proven absent by PLAN. Create-only PUTs remain the race guard, and
+  replayed ranges still probe both supported encodings before recovery.
+- Failed multi-message checkpoints still replay one exact message at a time,
+  preserving bounded retries and dead-letter isolation.
+
+## What was added in 1.3.0-dev.17
 
 - S3/R2 APPLY now prefetches deterministic canonical-object metadata and
   catalog shards in bounded parallel waves, removing serial shard LIST/GET
@@ -654,7 +665,7 @@ WORK_QUEUE_SEGMENT_SIZE: 500,
 QUEUE_ROWS_PER_TRANSACTION: 5000,
 APPLY_BATCH_SIZE: 20,
 INITIAL_APPLY_BATCH_SIZE: 5,
-S3_APPLY_BATCH_SIZE: 20,
+S3_APPLY_BATCH_SIZE: 64,
 APPLY_REPLAY_BATCH_SIZE: 1,
 APPLY_MAX_MESSAGE_ATTEMPTS: 3,
 DEAD_LETTER_FILE: 'dead-letter-queue.json',
@@ -669,13 +680,14 @@ LOG_PROGRESS_TO_CONSOLE: true,
 
 Avoid raising `EXECUTION_BUDGET_MS` close to the six-minute Apps Script limit. The checkpoint margin is a correctness feature, not unused capacity.
 
-S3/R2 APPLY groups up to twenty messages into one durable transaction and
-prefetches the touched canonical-object metadata and catalog shards in bounded
-parallel waves. This amortizes its deterministic commit, catalog merge, and
-final checkpoint while avoiding serial per-shard LIST/GET calls. The total
-buffered upload payload remains capped by `S3_MAX_PARALLEL_BYTES`; if a group
-fails before its commit, replay splits it to one message so a poison or
-oversized message is isolated safely.
+S3/R2 APPLY groups up to 64 messages into one durable transaction and reads or
+writes small metadata objects in waves of up to 64 requests. Fresh ranges rely
+on create-only message writes instead of redundant canonical preflight reads;
+replays still probe both supported encodings. This amortizes the deterministic
+commit, catalog merge, and final checkpoint while avoiding serial per-shard
+operations. Buffered upload payloads remain capped by
+`S3_MAX_PARALLEL_BYTES`; if a group fails before its commit, replay splits it
+to one message so a poison or oversized message is isolated safely.
 
 ## S3 / Cloudflare R2 setup
 

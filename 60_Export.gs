@@ -149,7 +149,8 @@ function processApplySlice_(state, executionStartedMs) {
           start,
           endExclusive,
           batchEntries,
-          context
+          context,
+          replayingInFlight
         );
         commit.durationMs = Date.now() - batchStartedMs;
         commit.finishedAt = isoNow_();
@@ -228,14 +229,23 @@ function loadValidApplyCommit_(
   }
 }
 
-function exportQueueBatch_(state, layout, segmentIndex, start, endExclusive, entries, context) {
+function exportQueueBatch_(
+  state,
+  layout,
+  segmentIndex,
+  start,
+  endExclusive,
+  entries,
+  context,
+  replayingInFlight
+) {
   const records = [];
   const pendingUploads = [];
   let pendingUploadBytes = 0;
 
   if (isS3StorageBackend_()) {
     measureOperation_(context.metrics, 's3CanonicalPrefetch', function () {
-      prepareS3CanonicalBatchContexts_(layout, entries, context);
+      prepareS3CanonicalBatchContexts_(layout, entries, context, Boolean(replayingInFlight));
     });
   }
 

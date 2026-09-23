@@ -44,8 +44,8 @@ function validateS3Configuration_() {
   }
   const parallel = Number(config.S3_MAX_PARALLEL_REQUESTS);
   const parallelBytes = Number(config.S3_MAX_PARALLEL_BYTES);
-  if (!Number.isInteger(parallel) || parallel < 1 || parallel > 20) {
-    throw new Error('S3_MAX_PARALLEL_REQUESTS must be between 1 and 20.');
+  if (!Number.isInteger(parallel) || parallel < 1 || parallel > 100) {
+    throw new Error('S3_MAX_PARALLEL_REQUESTS must be between 1 and 100.');
   }
   if (!Number.isInteger(parallelBytes) || parallelBytes < 1024 * 1024 || parallelBytes > 48 * 1024 * 1024) {
     throw new Error('S3_MAX_PARALLEL_BYTES must be between 1 MiB and 48 MiB.');

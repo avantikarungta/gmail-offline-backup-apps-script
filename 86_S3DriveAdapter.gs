@@ -375,7 +375,7 @@ function s3ConcurrentModificationError_() {
   return error;
 }
 
-function prepareS3CanonicalBatchContexts_(layout, entries, context) {
+function prepareS3CanonicalBatchContexts_(layout, entries, context, probeExisting) {
   context.canonicalByShard = context.canonicalByShard || {};
   context.dataFoldersByName = context.dataFoldersByName || {};
   const specs = [];
@@ -397,6 +397,11 @@ function prepareS3CanonicalBatchContexts_(layout, entries, context) {
     shardContext.s3ProbedById = shardContext.s3ProbedById || {};
     if (shardContext.s3ProbedById[id]) return;
     shardContext.s3ProbedById[id] = true;
+    // A fresh queue batch was proven absent by PLAN and has a single writer.
+    // Its create-only PUT is the race guard, so preflight reads would only add
+    // latency. Replays must probe both supported encodings because a prior
+    // invocation may have written the object before dying pre-commit.
+    if (!probeExisting) return;
     [id + '.eml', id + '.eml.zip'].forEach(function (fileName) {
       specs.push({
         id: id,

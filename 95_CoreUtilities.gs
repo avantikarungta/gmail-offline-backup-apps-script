@@ -29,8 +29,8 @@ function validateConfiguration_() {
     throw new Error('INITIAL_APPLY_BATCH_SIZE must be between 1 and APPLY_BATCH_SIZE.');
   }
   if (backupConfig_().S3_APPLY_BATCH_SIZE < 1 ||
-      backupConfig_().S3_APPLY_BATCH_SIZE > backupConfig_().APPLY_BATCH_SIZE) {
-    throw new Error('S3_APPLY_BATCH_SIZE must be between 1 and APPLY_BATCH_SIZE.');
+      backupConfig_().S3_APPLY_BATCH_SIZE > 100) {
+    throw new Error('S3_APPLY_BATCH_SIZE must be between 1 and 100.');
   }
   if (backupConfig_().EXECUTION_BUDGET_MS <= backupConfig_().CHECKPOINT_SAFETY_MS + 5000 ||
       backupConfig_().EXECUTION_BUDGET_MS > 5 * 60 * 1000) {

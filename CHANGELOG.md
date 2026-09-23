@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.0-dev.18 — staging
+
+- Increased healthy S3/R2 transactions and small-request waves to 64 so one
+  catalog read/write wave amortizes substantially more messages while the
+  independent 8 MiB upload-payload ceiling remains in force.
+- Removed canonical-object reads from fresh single-writer queue ranges. Their
+  create-only PUT remains the race guard; replayed ranges still probe both
+  `.eml` and `.eml.zip` candidates before validating recovery.
+- Preserved deterministic commits, conditional catalog updates, checkpoint
+  replay splitting, and per-message dead-letter isolation on the faster path.
+
 ## 1.3.0-dev.17 — staging
 
 - Removed the dominant S3/R2 APPLY metadata bottleneck by prefetching canonical

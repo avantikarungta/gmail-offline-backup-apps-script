@@ -28,7 +28,7 @@
  */
 
 const BACKUP_CONFIG = Object.freeze({
-  VERSION: '1.3.0-dev.17',
+  VERSION: '1.3.0-dev.18',
 
   // Archive storage. GOOGLE_DRIVE preserves the existing behavior. S3 uses
   // the S3-compatible API and works with AWS S3, Cloudflare R2, and compatible
@@ -47,7 +47,7 @@ const BACKUP_CONFIG = Object.freeze({
   S3_KEY_PREFIX: '',
   S3_ADDRESSING_STYLE: 'PATH',
   S3_LIST_PAGE_SIZE: 500,
-  S3_MAX_PARALLEL_REQUESTS: 20,
+  S3_MAX_PARALLEL_REQUESTS: 64,
   // Keep a wave below Apps Script's practical V8 heap ceiling. Each upload is
   // also referenced by the Gmail response, archive record, and UrlFetch call.
   S3_MAX_PARALLEL_BYTES: 8 * 1024 * 1024,
@@ -55,7 +55,7 @@ const BACKUP_CONFIG = Object.freeze({
   // R2/S3 transaction. Upload payload memory remains capped independently
   // above; a failed multi-message checkpoint is replay-safely split to one
   // message.
-  S3_APPLY_BATCH_SIZE: 20,
+  S3_APPLY_BATCH_SIZE: 64,
   // Full replay hashing above this size can exceed the Apps Script V8 heap.
   // Such a message must carry a deterministic external full-hash attestation;
   // Apps Script still validates its object metadata before advancing state.

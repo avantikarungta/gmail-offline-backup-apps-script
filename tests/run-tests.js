@@ -436,16 +436,16 @@ function listCanonical(folder) {
     )).map(x => x.id),
     ['d1', 's1', 'd2', 's2']
   );
-  assert.strictEqual(sandbox.__BACKUP_CONFIG.VERSION, '1.3.0-dev.17');
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.VERSION, '1.3.0-dev.18');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.DRIVE_WRITE_MODE, 'PARALLEL_API');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.ARCHIVE_ENCODING, 'ZIP');
-  assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_MAX_PARALLEL_REQUESTS, 20);
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_MAX_PARALLEL_REQUESTS, 64);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_MAX_PARALLEL_BYTES, 8 * 1024 * 1024);
-  assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_APPLY_BATCH_SIZE, 20);
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_APPLY_BATCH_SIZE, 64);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.APPLY_REPLAY_BATCH_SIZE, 1);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.APPLY_MAX_MESSAGE_ATTEMPTS, 3);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_REPLAY_FULL_HASH_MAX_BYTES, 8 * 1024 * 1024);
-  assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.17');
+  assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.18');
 
   // SigV4 requests never expose credentials in URLs and sign all required
   // S3 headers. The XML parser covers paginated objects and virtual folders.
@@ -702,7 +702,7 @@ function listCanonical(folder) {
   sandbox.GmailBackupLibrary.withRuntime(s3ReadRuntime, function () {
     sandbox.prepareS3CanonicalBatchContexts_(contextLayout, [
       {id: 'canonical-present'}, {id: 'canonical-missing'},
-    ], applyContext);
+    ], applyContext, true);
     sandbox.preloadS3CatalogShardContexts_(contextLayout.catalog, ['aa', 'missing'], applyContext);
   });
   const presentShard = sandbox.shardForId_('canonical-present');
@@ -710,6 +710,17 @@ function listCanonical(folder) {
   assert.strictEqual(applyContext.catalogByShard.aa.byId['catalog-existing'].status, 'exported');
   assert.strictEqual(applyContext.catalogByShard.aa.version, '"catalog-etag"');
   assert.strictEqual(applyContext.catalogByShard.missing.fileId, null);
+
+  const freshApplyContext = {canonicalByShard: {}, catalogByShard: {}, dataFoldersByName: {}};
+  const readWaveCountBeforeFresh = capturedS3Reads.length;
+  sandbox.GmailBackupLibrary.withRuntime(s3ReadRuntime, function () {
+    sandbox.prepareS3CanonicalBatchContexts_(contextLayout, [
+      {id: 'fresh-create-only'},
+    ], freshApplyContext, false);
+  });
+  const freshShard = sandbox.shardForId_('fresh-create-only');
+  assert(freshApplyContext.canonicalByShard[freshShard]);
+  assert.strictEqual(capturedS3Reads.length, readWaveCountBeforeFresh);
 
   // The S3 virtual filesystem preserves the Drive-like contract used by the
   // core planner/exporter while enforcing create-only and versioned updates.
@@ -2200,7 +2211,7 @@ function listCanonical(folder) {
     : null;
   const statusWritesBefore = statusTextFile ? statusTextFile.setContentCalls : 0;
   const machineStatus = sandbox.agentStatus();
-  assert.strictEqual(machineStatus.exporterVersion, '1.3.0-dev.17');
+  assert.strictEqual(machineStatus.exporterVersion, '1.3.0-dev.18');
   assert.strictEqual(
     statusTextFile ? statusTextFile.setContentCalls : 0,
     statusWritesBefore,

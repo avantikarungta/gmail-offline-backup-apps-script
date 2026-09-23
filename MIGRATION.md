@@ -1,5 +1,15 @@
 # Migration Guide
 
+## From 1.3.0-dev.17 to 1.3.0-dev.18
+
+1. Checkpoint-safely pause an active APPLY, validate, and push all modules.
+2. Resume the preserved plan. Fresh S3/R2 ranges can contain up to 64 messages
+   and rely on create-only writes instead of redundant canonical preflight
+   reads. Any preserved or failed in-flight range still replays one message and
+   probes both supported encodings before recovery.
+3. No archive migration, credential change, capability probe, or new PLAN is
+   required. Buffered upload payloads remain capped at 8 MiB.
+
 ## From 1.3.0-dev.16 to 1.3.0-dev.17
 
 1. Checkpoint-safely pause an active APPLY, run `make validate`, inspect
