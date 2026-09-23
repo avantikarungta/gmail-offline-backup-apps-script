@@ -667,3 +667,115 @@ function s3ApiUpdateMedia_(updates) {
   }
   return results;
 }
+
+function s3ApiHeadFiles_(specs) {
+  const client = newS3ObjectClient_();
+  const items = (specs || []).map(function (spec) {
+    const key = normalizeS3Key_(spec.key || spec.fileId);
+    return {
+      spec: spec,
+      key: key,
+      operation: {
+        method: 'GET', key: key, label: 'PARALLEL_HEAD',
+        headers: {range: 'bytes=0-0', 'accept-encoding': 'identity'},
+      },
+    };
+  });
+  const responses = s3ApiFetchReadItems_(client, items, [200, 206, 404, 416], 'parallel metadata read');
+  return responses.map(function (result) {
+    const status = Number(result.response.getResponseCode());
+    if (status === 404) return {spec: result.item.spec, key: result.item.key, head: null};
+    const headers = s3ResponseHeaders_(result.response);
+    if (status === 416 && s3ContentRangeSize_(headers['content-range']) !== 0) {
+      throw new Error('S3 ranged metadata request was not satisfiable for a non-empty object.');
+    }
+    if (status === 200 && Number(headers['content-length'] || 0) > 1) {
+      throw new Error('S3 endpoint ignored the bounded Range request used for metadata reads.');
+    }
+    return {
+      spec: result.item.spec,
+      key: result.item.key,
+      head: s3HeadFromHeaders_(result.item.key, headers),
+    };
+  });
+}
+
+function s3ApiGetTextFiles_(specs) {
+  const client = newS3ObjectClient_();
+  const items = (specs || []).map(function (spec) {
+    const key = normalizeS3Key_(spec.key || spec.fileId);
+    return {
+      spec: spec,
+      key: key,
+      operation: {
+        method: 'GET', key: key, label: 'PARALLEL_GET',
+        headers: {'accept-encoding': 'identity'},
+      },
+    };
+  });
+  const responses = s3ApiFetchReadItems_(client, items, [200, 404], 'parallel object read');
+  return responses.map(function (result) {
+    const status = Number(result.response.getResponseCode());
+    if (status === 404) {
+      return {spec: result.item.spec, key: result.item.key, found: false};
+    }
+    const headers = s3ResponseHeaders_(result.response);
+    const content = result.response.getContentText();
+    const etag = String(headers.etag || '');
+    if (!etag) throw new Error('S3 parallel object read returned no entity tag.');
+    return {
+      spec: result.item.spec,
+      key: result.item.key,
+      found: true,
+      content: content,
+      etag: etag,
+      size: utilitiesService_().newBlob(content).getBytes().length,
+      contentType: String(headers['content-type'] || 'application/octet-stream'),
+    };
+  });
+}
+
+function s3ApiFetchReadItems_(client, items, acceptedStatuses, operationName) {
+  const output = [];
+  const waveSize = Math.max(1, Number(backupConfig_().S3_MAX_PARALLEL_REQUESTS || 1));
+  for (let offset = 0; offset < items.length; offset += waveSize) {
+    const wave = items.slice(offset, offset + waveSize);
+    let delay = backupConfig_().INITIAL_RETRY_DELAY_MS;
+    let responses = null;
+    for (let attempt = 1; attempt <= backupConfig_().MAX_RETRIES; attempt++) {
+      try {
+        responses = urlFetchService_().fetchAll(wave.map(function (item) {
+          return buildS3SignedRequest_(client.profile, client.credentials, item.operation);
+        }));
+      } catch (error) {
+        if (attempt === backupConfig_().MAX_RETRIES || !isTransientError_(error)) throw error;
+        utilitiesService_().sleep(delay + Math.floor(Math.random() * 250));
+        delay *= 2;
+        continue;
+      }
+      const transient = responses.some(function (response) {
+        const status = Number(response.getResponseCode());
+        return status === 429 || status >= 500;
+      });
+      if (transient && attempt < backupConfig_().MAX_RETRIES) {
+        utilitiesService_().sleep(delay + Math.floor(Math.random() * 250));
+        delay *= 2;
+        responses = null;
+        continue;
+      }
+      break;
+    }
+    if (!responses) throw new Error('S3 ' + operationName + ' exhausted its retry budget.');
+    responses.forEach(function (response, index) {
+      const status = Number(response.getResponseCode());
+      if (acceptedStatuses.indexOf(status) === -1) {
+        throw new Error(
+          'S3 ' + operationName + ' failed for request ' + (offset + index) + ' with HTTP ' + status + ': ' +
+          sanitizeS3ErrorBody_(response.getContentText ? response.getContentText() : '')
+        );
+      }
+      output.push({item: wave[index], response: response});
+    });
+  }
+  return output;
+}

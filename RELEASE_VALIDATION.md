@@ -1,4 +1,4 @@
-# Release Validation — 1.3.0-dev.16
+# Release Validation — 1.3.0-dev.17
 
 ## Automated checks performed
 
@@ -37,7 +37,8 @@
 - crash after APPLY commit creation and replay without duplicate canonical files.
 - legacy in-flight checkpoint compatibility and durable pre-Gmail attempt counts;
 - one-message replay isolation, bounded retry exhaustion, and DLQ publication;
-- eight-message S3/R2 healthy-path batching with one-message failure replay;
+- twenty-message S3/R2 healthy-path batching with one-message failure replay;
+- bounded parallel S3/R2 canonical metadata and catalog shard prefetch;
 - crash after DLQ evidence but before commit, followed by idempotent replay;
 - dead-letter catalog markers remaining unhealthy for a future PLAN.
 - ZIP compression and exact ZIP→EML SHA-256 round trips;

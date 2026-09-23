@@ -233,6 +233,12 @@ function exportQueueBatch_(state, layout, segmentIndex, start, endExclusive, ent
   const pendingUploads = [];
   let pendingUploadBytes = 0;
 
+  if (isS3StorageBackend_()) {
+    measureOperation_(context.metrics, 's3CanonicalPrefetch', function () {
+      prepareS3CanonicalBatchContexts_(layout, entries, context);
+    });
+  }
+
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     const id = entry.id;
@@ -968,9 +974,14 @@ function mergeCommitIntoCatalogByShardParallel_(catalogFolder, commit, context) 
     recordsByShard[shard].push(record);
   });
 
+  const shards = Object.keys(recordsByShard).sort();
+  if (isS3StorageBackend_()) {
+    preloadS3CatalogShardContexts_(catalogFolder, shards, context);
+  }
+
   const updates = [];
   const creates = [];
-  Object.keys(recordsByShard).sort().forEach(function (shard) {
+  shards.forEach(function (shard) {
     const cache = getCatalogShardContext_(catalogFolder, shard, context);
     recordsByShard[shard].forEach(function (record) { cache.byId[record.id] = record; });
     const content = JSON.stringify(

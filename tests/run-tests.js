@@ -436,15 +436,16 @@ function listCanonical(folder) {
     )).map(x => x.id),
     ['d1', 's1', 'd2', 's2']
   );
-  assert.strictEqual(sandbox.__BACKUP_CONFIG.VERSION, '1.3.0-dev.16');
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.VERSION, '1.3.0-dev.17');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.DRIVE_WRITE_MODE, 'PARALLEL_API');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.ARCHIVE_ENCODING, 'ZIP');
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_MAX_PARALLEL_REQUESTS, 20);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_MAX_PARALLEL_BYTES, 8 * 1024 * 1024);
-  assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_APPLY_BATCH_SIZE, 8);
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_APPLY_BATCH_SIZE, 20);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.APPLY_REPLAY_BATCH_SIZE, 1);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.APPLY_MAX_MESSAGE_ATTEMPTS, 3);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_REPLAY_FULL_HASH_MAX_BYTES, 8 * 1024 * 1024);
-  assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.16');
+  assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.17');
 
   // SigV4 requests never expose credentials in URLs and sign all required
   // S3 headers. The XML parser covers paginated objects and virtual folders.
@@ -626,6 +627,89 @@ function listCanonical(folder) {
   assert.strictEqual(capturedS3Waves.length, 2);
   assert.strictEqual(capturedS3Waves[1][0].headers['if-match'], '"prior-etag"');
   assert.strictEqual(s3UpdateResults[0].id, 'mail/root/catalog/shard-00.json');
+
+  // S3 APPLY preloads deterministic canonical metadata and catalog JSON in
+  // bounded parallel waves instead of listing and reading one shard at a time.
+  const capturedS3Reads = [];
+  const existingCatalog = '[{"id":"catalog-existing","status":"exported"}]';
+  const s3ReadRuntime = sandbox.GmailBackupLibrary.createRuntime({
+    config: {
+      STORAGE_BACKEND: 'S3', ARCHIVE_ENCODING: 'EML', S3_BUCKET: 'archive-bucket',
+      S3_ENDPOINT: 'https://example.r2.cloudflarestorage.com', S3_REGION: 'auto',
+      S3_KEY_PREFIX: 'mail/', S3_ADDRESSING_STYLE: 'PATH',
+      S3_MAX_PARALLEL_REQUESTS: 20,
+    },
+    services: {
+      properties: isolatedS3PropertyService,
+      urlFetch: {
+        fetchAll(requests) {
+          capturedS3Reads.push(requests);
+          return requests.map(request => {
+            const missing = request.url.includes('missing');
+            const ranged = Boolean(request.headers.range);
+            const content = ranged ? '' : existingCatalog;
+            return {
+              getResponseCode() { return missing ? 404 : (ranged ? 206 : 200); },
+              getAllHeaders() {
+                if (missing) return {};
+                return ranged
+                  ? {
+                    'Content-Length': '1', 'Content-Range': 'bytes 0-0/1234',
+                    ETag: '"read-etag"', 'Content-Type': 'message/rfc822',
+                  }
+                  : {
+                    'Content-Length': String(Buffer.byteLength(content)),
+                    ETag: '"catalog-etag"', 'Content-Type': 'application/json',
+                  };
+              },
+              getContentText() { return content; },
+            };
+          });
+        },
+      },
+    },
+  });
+  const parallelHeads = sandbox.GmailBackupLibrary.withRuntime(s3ReadRuntime, function () {
+    return sandbox.s3ApiHeadFiles_([
+      {id: 'present', key: 'mail/root/data/present.eml'},
+      {id: 'missing', key: 'mail/root/data/missing.eml'},
+    ]);
+  });
+  assert.strictEqual(capturedS3Reads.length, 1);
+  assert.strictEqual(capturedS3Reads[0].length, 2);
+  assert.strictEqual(capturedS3Reads[0][0].headers.range, 'bytes=0-0');
+  assert.strictEqual(parallelHeads[0].head.size, 1234);
+  assert.strictEqual(parallelHeads[1].head, null);
+  const parallelCatalogReads = sandbox.GmailBackupLibrary.withRuntime(s3ReadRuntime, function () {
+    return sandbox.s3ApiGetTextFiles_([
+      {shard: 'aa', key: 'mail/root/catalog/shard-aa.json'},
+      {shard: 'missing', key: 'mail/root/catalog/shard-missing.json'},
+    ]);
+  });
+  assert.strictEqual(capturedS3Reads.length, 2);
+  assert.strictEqual(parallelCatalogReads[0].etag, '"catalog-etag"');
+  assert.strictEqual(parallelCatalogReads[0].content, existingCatalog);
+  assert.strictEqual(parallelCatalogReads[1].found, false);
+
+  const contextDrive = new sandbox.S3DriveService_({}, {
+    bucket: 'archive-bucket', rootPrefix: 'mail/', bindingHash: 'binding',
+  });
+  const contextLayout = {
+    data: contextDrive.getRootFolder().createFolder('root').createFolder('data'),
+    catalog: contextDrive.getRootFolder().createFolder('root').createFolder('catalog'),
+  };
+  const applyContext = {canonicalByShard: {}, catalogByShard: {}, dataFoldersByName: {}};
+  sandbox.GmailBackupLibrary.withRuntime(s3ReadRuntime, function () {
+    sandbox.prepareS3CanonicalBatchContexts_(contextLayout, [
+      {id: 'canonical-present'}, {id: 'canonical-missing'},
+    ], applyContext);
+    sandbox.preloadS3CatalogShardContexts_(contextLayout.catalog, ['aa', 'missing'], applyContext);
+  });
+  const presentShard = sandbox.shardForId_('canonical-present');
+  assert.strictEqual(applyContext.canonicalByShard[presentShard].canonical.allById['canonical-present'].length, 2);
+  assert.strictEqual(applyContext.catalogByShard.aa.byId['catalog-existing'].status, 'exported');
+  assert.strictEqual(applyContext.catalogByShard.aa.version, '"catalog-etag"');
+  assert.strictEqual(applyContext.catalogByShard.missing.fileId, null);
 
   // The S3 virtual filesystem preserves the Drive-like contract used by the
   // core planner/exporter while enforcing create-only and versioned updates.
@@ -2116,7 +2200,7 @@ function listCanonical(folder) {
     : null;
   const statusWritesBefore = statusTextFile ? statusTextFile.setContentCalls : 0;
   const machineStatus = sandbox.agentStatus();
-  assert.strictEqual(machineStatus.exporterVersion, '1.3.0-dev.16');
+  assert.strictEqual(machineStatus.exporterVersion, '1.3.0-dev.17');
   assert.strictEqual(
     statusTextFile ? statusTextFile.setContentCalls : 0,
     statusWritesBefore,

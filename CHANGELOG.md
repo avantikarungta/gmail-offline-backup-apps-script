@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.0-dev.17 — staging
+
+- Removed the dominant S3/R2 APPLY metadata bottleneck by prefetching canonical
+  object metadata and catalog shards in bounded parallel request waves instead
+  of listing and reading each touched shard serially.
+- Increased healthy S3/R2 transactions and request waves to twenty messages
+  while retaining the independent 8 MiB upload-memory ceiling.
+- Preserved deterministic commits, conditional catalog updates, one-message
+  replay splitting, and dead-letter isolation across the faster path.
+
 ## 1.3.0-dev.16 — staging
 
 - Increased bounded S3/R2 APPLY transactions from one message to eight so a

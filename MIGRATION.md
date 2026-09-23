@@ -1,5 +1,16 @@
 # Migration Guide
 
+## From 1.3.0-dev.16 to 1.3.0-dev.17
+
+1. Checkpoint-safely pause an active APPLY, run `make validate`, inspect
+   `make files`, and push the updated modules.
+2. Resume the preserved plan. Existing in-flight checkpoints finish unchanged;
+   new S3/R2 ranges use parallel canonical/catalog prefetch and contain up to
+   twenty healthy messages.
+3. No archive migration, credential change, capability probe, or new PLAN is
+   required. Upload memory remains capped at 8 MiB and failed ranges still
+   replay one message at a time.
+
 ## From 1.3.0-dev.15 to 1.3.0-dev.16
 
 1. Checkpoint-safely pause an active APPLY, run `make validate`, inspect

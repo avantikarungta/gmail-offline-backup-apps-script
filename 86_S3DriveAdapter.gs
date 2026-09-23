@@ -374,3 +374,80 @@ function s3ConcurrentModificationError_() {
   error.code = 'S3_PRECONDITION_FAILED';
   return error;
 }
+
+function prepareS3CanonicalBatchContexts_(layout, entries, context) {
+  context.canonicalByShard = context.canonicalByShard || {};
+  context.dataFoldersByName = context.dataFoldersByName || {};
+  const specs = [];
+  (entries || []).forEach(function (entry) {
+    if (!entry || !entry.id) return;
+    const id = String(entry.id);
+    const shard = shardForId_(id);
+    const folderName = 'shard-' + shard;
+    let shardContext = context.canonicalByShard[shard];
+    if (!shardContext) {
+      const folder = context.dataFoldersByName[folderName] || layout.data.createFolder(folderName);
+      context.dataFoldersByName[folderName] = folder;
+      shardContext = context.canonicalByShard[shard] = {
+        folder: folder,
+        canonical: {byId: {}, allById: {}, duplicates: 0, invalidFiles: 0},
+        s3ProbedById: {},
+      };
+    }
+    shardContext.s3ProbedById = shardContext.s3ProbedById || {};
+    if (shardContext.s3ProbedById[id]) return;
+    shardContext.s3ProbedById[id] = true;
+    [id + '.eml', id + '.eml.zip'].forEach(function (fileName) {
+      specs.push({
+        id: id,
+        shard: shard,
+        fileName: fileName,
+        folder: shardContext.folder,
+        key: shardContext.folder.getId() + fileName,
+      });
+    });
+  });
+
+  s3ApiHeadFiles_(specs).forEach(function (result) {
+    if (!result.head) return;
+    const spec = result.spec;
+    const canonical = context.canonicalByShard[spec.shard].canonical;
+    const file = new S3File_(spec.folder.service, result.key, result.head);
+    if (!canonical.allById[spec.id]) canonical.allById[spec.id] = [];
+    canonical.allById[spec.id].push(file);
+    const preferredName = spec.id + (backupConfig_().ARCHIVE_ENCODING === 'ZIP' ? '.eml.zip' : '.eml');
+    if (!canonical.byId[spec.id] || spec.fileName === preferredName) canonical.byId[spec.id] = file;
+  });
+}
+
+function preloadS3CatalogShardContexts_(catalogFolder, shards, context) {
+  context.catalogByShard = context.catalogByShard || {};
+  const specs = (shards || []).filter(function (shard) {
+    return !context.catalogByShard[shard];
+  }).map(function (shard) {
+    const name = 'shard-' + shard + '.json';
+    return {shard: shard, name: name, key: catalogFolder.getId() + name};
+  });
+
+  s3ApiGetTextFiles_(specs).forEach(function (result) {
+    const spec = result.spec;
+    let records = [];
+    if (result.found) {
+      try { records = JSON.parse(result.content || '[]'); } catch (error) {
+        throw new Error('Invalid JSON in S3 catalog file "' + spec.name + '": ' + errorToString_(error));
+      }
+      if (!Array.isArray(records)) throw new Error('S3 catalog file "' + spec.name + '" must contain an array.');
+    }
+    const byId = {};
+    records.forEach(function (record) {
+      if (record && record.id) byId[record.id] = record;
+    });
+    context.catalogByShard[spec.shard] = {
+      name: spec.name,
+      file: null,
+      fileId: result.found ? result.key : null,
+      version: result.found ? result.etag : null,
+      byId: byId,
+    };
+  });
+}
