@@ -51,7 +51,11 @@ function loadValidApplyCommit_(
     validateCommit_(commit, state.plan.id, segmentIndex, start, endExclusive, batchEntries);
     validateDeadLetterCommitEvidence_(state, commit);
     if (backupConfig_().VERIFY_REPLAYED_COMMITS && settings.verifyFiles !== false) {
-      const validation = validateCommittedFiles_(commit, layout);
+      const validation = validateCommittedFiles_(
+        commit,
+        layout,
+        settings.verifyFiles === 'metadata' ? {verifyIntegrity: false} : null
+      );
       if (!validation.ok) {
         logger_().warn('Discarding an invalid replay checkpoint ' + commitName + ': ' +
           JSON.stringify(validation.failures));
@@ -83,27 +87,42 @@ function loadCoveringApplyCommit_(segmentCommitsFolder, state, layout, segmentIn
   const commitFiles = listFilesByName_(segmentCommitsFolder);
   const candidates = Object.keys(commitFiles).map(function (name) {
     const match = /^(\d{8})-(\d{8})\.json$/.exec(name);
-    return match ? {name: name, start: Number(match[1]), endExclusive: Number(match[2])} : null;
+    return match ? {
+      file: commitFiles[name],
+      name: name,
+      source: 'commits',
+      start: Number(match[1]),
+      endExclusive: Number(match[2]),
+    } : null;
   }).filter(function (candidate) {
     return candidate && candidate.start <= Number(start) &&
       candidate.endExclusive > Number(start) && candidate.endExclusive <= entries.length;
-  }).sort(function (a, b) {
+  });
+  addQuarantinedCoveringApplyCommitCandidates_(
+    candidates, state, layout, segmentIndex, start, entries.length
+  );
+  candidates.sort(function (a, b) {
     return b.endExclusive - a.endExclusive || b.start - a.start;
   });
 
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
-    const loaded = loadValidApplyCommit_(
-      segmentCommitsFolder,
-      candidate.name,
-      state,
-      layout,
-      segmentIndex,
-      candidate.start,
-      candidate.endExclusive,
-      entries.slice(candidate.start, candidate.endExclusive),
-      {verifyFiles: false}
-    );
+    const expectedEntries = entries.slice(candidate.start, candidate.endExclusive);
+    const loaded = candidate.source === 'commits'
+      ? loadValidApplyCommit_(
+        segmentCommitsFolder,
+        candidate.name,
+        state,
+        layout,
+        segmentIndex,
+        candidate.start,
+        candidate.endExclusive,
+        expectedEntries,
+        {verifyFiles: 'metadata'}
+      )
+      : loadQuarantinedCoveringApplyCommit_(
+        candidate, state, layout, segmentIndex, expectedEntries
+      );
     if (!loaded.file) continue;
     return {
       file: loaded.file,
@@ -112,9 +131,70 @@ function loadCoveringApplyCommit_(segmentCommitsFolder, state, layout, segmentIn
       endExclusive: candidate.endExclusive,
       coveringStart: candidate.start,
       coveringEndExclusive: candidate.endExclusive,
+      source: candidate.source,
     };
   }
   return null;
+}
+
+function addQuarantinedCoveringApplyCommitCandidates_(
+  candidates,
+  state,
+  layout,
+  segmentIndex,
+  start,
+  entryCount
+) {
+  const quarantine = findChildFolder_(layout.root, 'quarantine');
+  const checkpoints = quarantine ? findChildFolder_(quarantine, 'checkpoints') : null;
+  if (!checkpoints) return;
+  const safePlan = String(state.plan.id || 'unknown').replace(/[^A-Za-z0-9_-]/g, '_');
+  const prefix = safePlan + '-segment-' + padNumber_(segmentIndex, 8) + '-';
+  const iterator = checkpoints.getFiles();
+  while (iterator.hasNext()) {
+    const file = iterator.next();
+    const name = file.getName();
+    if (name.indexOf(prefix) !== 0) continue;
+    const match = /^(\d{8})-(\d{8})\.json\.invalid-/.exec(name.slice(prefix.length));
+    if (!match) continue;
+    const candidateStart = Number(match[1]);
+    const candidateEnd = Number(match[2]);
+    if (candidateStart <= Number(start) && candidateEnd > Number(start) && candidateEnd <= entryCount) {
+      candidates.push({
+        file: file,
+        name: name,
+        source: 'quarantine',
+        start: candidateStart,
+        endExclusive: candidateEnd,
+      });
+    }
+  }
+}
+
+function loadQuarantinedCoveringApplyCommit_(candidate, state, layout, segmentIndex, expectedEntries) {
+  try {
+    const commit = readJsonFile_(candidate.file, null);
+    validateCommit_(
+      commit,
+      state.plan.id,
+      segmentIndex,
+      candidate.start,
+      candidate.endExclusive,
+      expectedEntries
+    );
+    validateDeadLetterCommitEvidence_(state, commit);
+    const validation = validateCommittedFiles_(commit, layout, {verifyIntegrity: false});
+    if (!validation.ok) {
+      logger_().warn('Ignoring quarantined covering checkpoint ' + candidate.name + ': ' +
+        JSON.stringify(validation.failures));
+      return {file: null, commit: null};
+    }
+    return {file: candidate.file, commit: commit};
+  } catch (error) {
+    logger_().warn('Ignoring unreadable quarantined covering checkpoint ' + candidate.name + ': ' +
+      errorToString_(error));
+    return {file: null, commit: null};
+  }
 }
 
 function sliceApplyCommit_(commit, start, endExclusive) {

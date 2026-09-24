@@ -1,5 +1,14 @@
 # Migration Guide
 
+## From 1.3.0-dev.22 to 1.3.0-dev.23
+
+1. Checkpoint-safely pause APPLY and push all modules.
+2. Resume the preserved plan. Recovery may adopt a structurally valid covering
+   transaction from checkpoint quarantine after metadata-validating every
+   referenced object; message bodies are not downloaded.
+3. No archive migration, credential change, capability probe, or new PLAN is
+   required.
+
 ## From 1.3.0-dev.21 to 1.3.0-dev.22
 
 1. Checkpoint-safely pause APPLY and push all modules.

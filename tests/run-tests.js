@@ -436,7 +436,7 @@ function listCanonical(folder) {
     )).map(x => x.id),
     ['d1', 's1', 'd2', 's2']
   );
-  assert.strictEqual(sandbox.__BACKUP_CONFIG.VERSION, '1.3.0-dev.22');
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.VERSION, '1.3.0-dev.23');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.DRIVE_WRITE_MODE, 'PARALLEL_API');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.ARCHIVE_ENCODING, 'ZIP');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_MAX_PARALLEL_REQUESTS, 64);
@@ -445,7 +445,7 @@ function listCanonical(folder) {
   assert.strictEqual(sandbox.__BACKUP_CONFIG.APPLY_REPLAY_BATCH_SIZE, 1);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.APPLY_MAX_MESSAGE_ATTEMPTS, 3);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_REPLAY_FULL_HASH_MAX_BYTES, 8 * 1024 * 1024);
-  assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.22');
+  assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.23');
 
   // SigV4 requests never expose credentials in URLs and sign all required
   // S3 headers. The XML parser covers paginated objects and virtual folders.
@@ -2163,26 +2163,34 @@ function listCanonical(folder) {
   txState.apply.inFlight.endExclusive = 2;
   txState.apply.inFlight.replaySplitFromEndExclusive = 2;
   const coveringCommitDocument = JSON.parse(txCommitFolder.files[0].getBlob().getDataAsString());
+  sandbox.quarantineCheckpointFile_(
+    txRoot,
+    txCommitFolder.files[0],
+    'tx-plan',
+    'segment-00000000',
+    sandbox.commitFileName_(0, 2)
+  );
+  assert.strictEqual(txCommitFolder.files.length, 0, 'regression fixture must recover from quarantine');
   txCatalog.createFile(
     'shard-01.json',
     JSON.stringify([coveringCommitDocument.records[0]]),
     'application/json'
   );
-  const originalValidateCommittedFiles = sandbox.validateCommittedFiles_;
-  let coveringReplayFullValidationCalls = 0;
-  sandbox.validateCommittedFiles_ = function (...args) {
-    coveringReplayFullValidationCalls++;
-    return originalValidateCommittedFiles.apply(this, args);
+  const originalReadArchiveFileIntegrity = sandbox.readArchiveFileIntegrity_;
+  let coveringReplayIntegrityReads = 0;
+  sandbox.readArchiveFileIntegrity_ = function (...args) {
+    coveringReplayIntegrityReads++;
+    return originalReadArchiveFileIntegrity.apply(this, args);
   };
   sandbox.mergeCommitIntoCatalog_ = originalMerge;
   sandbox.processApplySlice_(txState, Date.now());
-  sandbox.validateCommittedFiles_ = originalValidateCommittedFiles;
+  sandbox.readArchiveFileIntegrity_ = originalReadArchiveFileIntegrity;
   assert.strictEqual(txState.phase, 'COMPLETE');
   assert.strictEqual(txState.apply.processed, 2);
   assert.strictEqual(txState.apply.exported, 2, 'covering replay must count only the unadvanced suffix');
   assert.strictEqual(txState.apply.inFlight, null);
   assert.strictEqual(
-    coveringReplayFullValidationCalls,
+    coveringReplayIntegrityReads,
     0,
     'an immutable covering commit must not re-read every stored message during cursor recovery'
   );
@@ -2338,7 +2346,7 @@ function listCanonical(folder) {
     : null;
   const statusWritesBefore = statusTextFile ? statusTextFile.setContentCalls : 0;
   const machineStatus = sandbox.agentStatus();
-  assert.strictEqual(machineStatus.exporterVersion, '1.3.0-dev.22');
+  assert.strictEqual(machineStatus.exporterVersion, '1.3.0-dev.23');
   assert.strictEqual(
     statusTextFile ? statusTextFile.setContentCalls : 0,
     statusWritesBefore,

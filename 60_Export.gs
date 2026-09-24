@@ -121,6 +121,7 @@ function processApplySlice_(state, executionStartedMs) {
           endExclusive: endExclusive,
           coveringStart: coveringCommit.coveringStart,
           coveringEndExclusive: coveringCommit.coveringEndExclusive,
+          source: coveringCommit.source,
         });
       }
     }
@@ -594,7 +595,8 @@ function applyReplayBatchEnd_(start, endExclusive) {
   );
 }
 
-function validateCommittedFiles_(commit, layout) {
+function validateCommittedFiles_(commit, layout, options) {
+  const settings = options || {};
   const failures = [];
   (commit.records || []).forEach(function (record) {
     if (record.status !== 'exported') return;
@@ -623,7 +625,7 @@ function validateCommittedFiles_(commit, layout) {
         failures.push({id: record.id, reason: 'file-mime-type-mismatch'});
         return;
       }
-      if (backupConfig_().VERIFY_RECOVERED_FILES) {
+      if (backupConfig_().VERIFY_RECOVERED_FILES && settings.verifyIntegrity !== false) {
         if (shouldUseExternalS3ReplayAttestation_(record)) {
           const attested = validateExternalS3ReplayAttestation_(commit, record, file, layout);
           if (!attested.ok) {

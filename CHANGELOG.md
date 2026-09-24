@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0-dev.23 — staging
+
+- Extended covering-commit cursor recovery to valid transaction commits that
+  an older release had moved into checkpoint quarantine.
+- Metadata-validated every referenced R2 object before adopting the uncounted
+  commit suffix, without full-reading message bodies or duplicating uploads.
+- Added a regression test for the quarantined covering-commit failure observed
+  in the live R2 APPLY run.
+
 ## 1.3.0-dev.22 — staging
 
 - Recovered a cursor regressed into the middle of an already-published APPLY
