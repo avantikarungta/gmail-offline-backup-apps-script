@@ -28,7 +28,7 @@
  */
 
 const BACKUP_CONFIG = Object.freeze({
-  VERSION: '1.3.0-dev.23',
+  VERSION: '1.3.0-dev.24',
 
   // Archive storage. GOOGLE_DRIVE preserves the existing behavior. S3 uses
   // the S3-compatible API and works with AWS S3, Cloudflare R2, and compatible
@@ -55,7 +55,7 @@ const BACKUP_CONFIG = Object.freeze({
   // R2/S3 transaction. Upload payload memory remains capped independently
   // above; a failed multi-message checkpoint is replay-safely split to one
   // message.
-  S3_APPLY_BATCH_SIZE: 64,
+  S3_APPLY_BATCH_SIZE: 32,
   // Full replay hashing above this size can exceed the Apps Script V8 heap.
   // Such a message must carry a deterministic external full-hash attestation;
   // Apps Script still validates its object metadata before advancing state.

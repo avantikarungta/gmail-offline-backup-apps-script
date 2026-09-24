@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0-dev.24 — staging
+
+- Capped fresh S3/R2 APPLY transactions at 32 messages after a measured
+  64-message live transaction exhausted the Apps Script V8 heap.
+- Preserved the independent 8 MiB upload-wave bound, adaptive sizing,
+  one-message replay isolation, and quarantine-aware commit recovery.
+
 ## 1.3.0-dev.23 — staging
 
 - Extended covering-commit cursor recovery to valid transaction commits that

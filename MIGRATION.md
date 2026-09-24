@@ -1,5 +1,13 @@
 # Migration Guide
 
+## From 1.3.0-dev.23 to 1.3.0-dev.24
+
+1. Checkpoint-safely pause APPLY and push all modules.
+2. Resume the preserved plan. Existing failed ranges still replay one message
+   at a time; newly opened S3/R2 ranges contain at most 32 messages.
+3. No archive migration, credential change, capability probe, or new PLAN is
+   required.
+
 ## From 1.3.0-dev.22 to 1.3.0-dev.23
 
 1. Checkpoint-safely pause APPLY and push all modules.
