@@ -2159,9 +2159,8 @@ function listCanonical(folder) {
   txState.apply.offset = 1;
   txState.apply.processed = 1;
   txState.apply.exported = 1;
-  txState.apply.inFlight.start = 1;
-  txState.apply.inFlight.endExclusive = 2;
-  txState.apply.inFlight.replaySplitFromEndExclusive = 2;
+  txState.apply.inFlight = null;
+  txState.apply.coveringRecoveryPending = true;
   const coveringCommitDocument = JSON.parse(txCommitFolder.files[0].getBlob().getDataAsString());
   sandbox.quarantineCheckpointFile_(
     txRoot,

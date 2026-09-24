@@ -98,6 +98,9 @@ function processApplySlice_(state, executionStartedMs) {
     );
     let commitFile = loadedCommit.file;
     let commit = loadedCommit.commit;
+    if (commitFile && state.apply.coveringRecoveryPending) {
+      state.apply.coveringRecoveryPending = false;
+    }
 
     // A stale overlapping worker can persist an older cursor after a newer
     // worker has already published a larger deterministic commit. Reuse the
@@ -105,10 +108,11 @@ function processApplySlice_(state, executionStartedMs) {
     // or uploading those messages again. Only the records at or after the
     // current cursor are counted, so already-advanced prefixes are not
     // double-counted.
-    if (!commitFile && replayingInFlight) {
+    if (!commitFile && (replayingInFlight || state.apply.coveringRecoveryPending)) {
       const coveringCommit = loadCoveringApplyCommit_(
         segmentCommitsFolder, state, layout, segmentIndex, start, entries
       );
+      state.apply.coveringRecoveryPending = false;
       if (coveringCommit) {
         endExclusive = coveringCommit.endExclusive;
         batchEntries = entries.slice(start, endExclusive);

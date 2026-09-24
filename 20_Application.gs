@@ -373,7 +373,14 @@ function resumeBackupAction_() {
     state.lastError = null;
     state.retryNotBefore = null;
     state.consecutiveErrors = 0;
-    if (resumable === BACKUP_PHASE.APPLYING && state.apply) state.apply.lastProgressAt = null;
+    if (resumable === BACKUP_PHASE.APPLYING && state.apply) {
+      state.apply.lastProgressAt = null;
+      // A pause can land after a stale worker advanced one-message replay
+      // commits and cleared inFlight while an earlier covering transaction is
+      // still durable (or quarantined by an older integrity check). Request
+      // one covering-commit scan on the first resumed APPLY batch.
+      state.apply.coveringRecoveryPending = true;
+    }
     state.updatedAt = isoNow_();
     clearPauseRequest_();
     saveState_(state);
