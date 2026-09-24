@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0-dev.25 — staging
+
+- Reduced fresh S3/R2 APPLY transactions from 32 to 16 messages after a
+  measured 31-message live transaction still exhausted the Apps Script V8
+  heap.
+- Preserved checkpoint replay, independent 8 MiB upload waves, and batching of
+  commit and catalog work while adding substantially more live heap margin.
+
 ## 1.3.0-dev.24 — staging
 
 - Capped fresh S3/R2 APPLY transactions at 32 messages after a measured

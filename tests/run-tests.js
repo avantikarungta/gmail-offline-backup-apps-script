@@ -436,16 +436,16 @@ function listCanonical(folder) {
     )).map(x => x.id),
     ['d1', 's1', 'd2', 's2']
   );
-  assert.strictEqual(sandbox.__BACKUP_CONFIG.VERSION, '1.3.0-dev.24');
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.VERSION, '1.3.0-dev.25');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.DRIVE_WRITE_MODE, 'PARALLEL_API');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.ARCHIVE_ENCODING, 'ZIP');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_MAX_PARALLEL_REQUESTS, 64);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_MAX_PARALLEL_BYTES, 8 * 1024 * 1024);
-  assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_APPLY_BATCH_SIZE, 32);
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_APPLY_BATCH_SIZE, 16);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.APPLY_REPLAY_BATCH_SIZE, 1);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.APPLY_MAX_MESSAGE_ATTEMPTS, 3);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_REPLAY_FULL_HASH_MAX_BYTES, 8 * 1024 * 1024);
-  assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.24');
+  assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.25');
 
   // SigV4 requests never expose credentials in URLs and sign all required
   // S3 headers. The XML parser covers paginated objects and virtual folders.
@@ -2345,7 +2345,7 @@ function listCanonical(folder) {
     : null;
   const statusWritesBefore = statusTextFile ? statusTextFile.setContentCalls : 0;
   const machineStatus = sandbox.agentStatus();
-  assert.strictEqual(machineStatus.exporterVersion, '1.3.0-dev.24');
+  assert.strictEqual(machineStatus.exporterVersion, '1.3.0-dev.25');
   assert.strictEqual(
     statusTextFile ? statusTextFile.setContentCalls : 0,
     statusWritesBefore,
