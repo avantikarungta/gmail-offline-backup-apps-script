@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0-dev.21 — staging
+
+- Prevented Apps Script from full-reading an existing S3/R2 object above the
+  replay-hash heap limit during create-conflict recovery.
+- Such objects now fail fast into the existing durable retry/dead-letter path;
+  the untouched object remains eligible for external full-hash attestation.
+
 ## 1.3.0-dev.20 — staging
 
 - Extended integrity-verified S3/R2 create-conflict recovery to large objects

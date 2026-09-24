@@ -377,6 +377,14 @@ function s3ConcurrentModificationError_() {
 
 function recoverS3ConditionalCreate_(upload, conflict, context) {
   const existing = driveService_().getFileById(conflict.id);
+  if (existing.getSize() > Number(backupConfig_().S3_REPLAY_FULL_HASH_MAX_BYTES)) {
+    const error = new Error(
+      'Existing S3 object exceeds the bounded Apps Script replay-hash limit; ' +
+      'external full-hash attestation is required before it can be committed.'
+    );
+    error.code = 'S3_REPLAY_ATTESTATION_REQUIRED';
+    throw error;
+  }
   const canonical = upload.canonical || {byId: {}, allById: {}};
   canonical.byId[upload.id] = existing;
   canonical.allById[upload.id] = [existing];

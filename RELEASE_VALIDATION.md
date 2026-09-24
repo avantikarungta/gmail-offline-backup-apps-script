@@ -1,4 +1,4 @@
-# Release Validation — 1.3.0-dev.20
+# Release Validation — 1.3.0-dev.21
 
 ## Automated checks performed
 
@@ -41,6 +41,8 @@
 - verified adoption of identical S3/R2 objects after parallel create-only PUT
   conflicts, without weakening conditional-write or hash guarantees;
 - the same verified recovery for objects above the parallel upload ceiling;
+- bounded oversized-conflict handling that requires external attestation or
+  durable dead-letter isolation instead of loading the full object in V8;
 - bounded parallel S3/R2 catalog prefetch and replay-only canonical probing;
 - crash after DLQ evidence but before commit, followed by idempotent replay;
 - dead-letter catalog markers remaining unhealthy for a future PLAN.

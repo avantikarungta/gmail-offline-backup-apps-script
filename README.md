@@ -1,13 +1,19 @@
 # Gmail Offline Backup for Google Apps Script
 
-**Release:** 1.3.0-dev.20
+**Release:** 1.3.0-dev.21
 **Purpose:** Create a resumable, verifiable offline Gmail archive when Google Takeout or IMAP is unavailable, but the user is authorized to access Gmail through Apps Script and the Gmail API.
 
 The exporter reads Gmail through the official Advanced Gmail service, writes complete RFC 2822 messages as one-entry `.eml.zip` files to Google Drive or an S3-compatible bucket, and records Gmail-only metadata in a sharded catalog. Existing plain `.eml` files remain valid in mixed archives. It never sends, labels, deletes, archives, forwards, or otherwise modifies Gmail.
 
 > Use this only for mail the account holder is permitted to retain. A technical ability to export data does not override company retention, confidentiality, or acceptable-use rules.
 
-## What is new in 1.3.0-dev.20
+## What is new in 1.3.0-dev.21
+
+- Existing R2/S3 objects above the bounded replay-hash limit are no longer
+  loaded wholesale into Apps Script. They fail fast into durable retry and
+  dead-letter isolation, leaving the object untouched for external attestation.
+
+## What was added in 1.3.0-dev.20
 
 - Integrity-verified R2/S3 replay recovery now covers large messages above the
   parallel upload-payload ceiling as well as normal parallel waves.

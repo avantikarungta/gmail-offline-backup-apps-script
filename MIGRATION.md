@@ -1,5 +1,14 @@
 # Migration Guide
 
+## From 1.3.0-dev.20 to 1.3.0-dev.21
+
+1. Push all modules and resume the preserved checkpoint.
+2. An existing object above the Apps Script replay-hash limit now fails fast;
+   after the configured durable attempts it is dead-lettered and APPLY
+   continues. Recover it later with the external full-hash attestation flow.
+3. No archive migration, credential change, capability probe, or new PLAN is
+   required.
+
 ## From 1.3.0-dev.19 to 1.3.0-dev.20
 
 1. Push all modules while APPLY is stopped on its preserved checkpoint.
