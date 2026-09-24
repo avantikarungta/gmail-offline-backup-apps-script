@@ -398,6 +398,7 @@ function recoverS3ConditionalCreate_(upload, conflict, context) {
   return {
     archive: archive,
     resolution: resolution,
+    storageFile: file,
     file: {
       id: file.getId(),
       name: file.getName(),
@@ -406,6 +407,29 @@ function recoverS3ConditionalCreate_(upload, conflict, context) {
       parents: [upload.folderId],
     },
   };
+}
+
+function createOrRecoverS3ArchiveFile_(upload, context) {
+  const blob = utilitiesService_().newBlob(
+    upload.archive.storedBytes,
+    upload.archive.mimeType,
+    upload.archive.fileName
+  );
+  try {
+    return {
+      archive: upload.archive,
+      resolution: upload.resolution,
+      storageFile: measureOperation_(context.metrics, 'driveArchiveCreate', function () {
+        return createArchiveFileWithIntegrity_(upload.dataFolder, blob, upload.archive);
+      }, upload.archive.storedByteLength),
+    };
+  } catch (error) {
+    if (!error || error.code !== 'S3_PRECONDITION_FAILED') throw error;
+    return recoverS3ConditionalCreate_(upload, {
+      id: upload.dataFolder.getId() + upload.archive.fileName,
+      preconditionFailed: true,
+    }, context);
+  }
 }
 
 function prepareS3CanonicalBatchContexts_(layout, entries, context, probeExisting) {

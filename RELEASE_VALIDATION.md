@@ -1,4 +1,4 @@
-# Release Validation — 1.3.0-dev.19
+# Release Validation — 1.3.0-dev.20
 
 ## Automated checks performed
 
@@ -40,6 +40,7 @@
 - 64-message S3/R2 healthy-path batching with one-message failure replay;
 - verified adoption of identical S3/R2 objects after parallel create-only PUT
   conflicts, without weakening conditional-write or hash guarantees;
+- the same verified recovery for objects above the parallel upload ceiling;
 - bounded parallel S3/R2 catalog prefetch and replay-only canonical probing;
 - crash after DLQ evidence but before commit, followed by idempotent replay;
 - dead-letter catalog markers remaining unhealthy for a future PLAN.

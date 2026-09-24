@@ -1,5 +1,13 @@
 # Migration Guide
 
+## From 1.3.0-dev.19 to 1.3.0-dev.20
+
+1. Push all modules while APPLY is stopped on its preserved checkpoint.
+2. Resume the same plan. Large create-only conflicts above the parallel upload
+   ceiling now use the same verified adoption path as small parallel objects.
+3. No archive migration, credential change, capability probe, or new PLAN is
+   required.
+
 ## From 1.3.0-dev.18 to 1.3.0-dev.19
 
 1. Push all modules while APPLY is stopped on its preserved checkpoint.

@@ -440,6 +440,61 @@ function firstFileByName_(folder, name) {
   return iterator.hasNext() ? iterator.next() : null;
 }
 
+function flushParallelDriveUploads_(pendingUploads, records, context) {
+  if (!(pendingUploads || []).length) return;
+  const uploads = pendingUploads.slice();
+  pendingUploads.length = 0;
+  const totalBytes = uploads.reduce(function (sum, upload) {
+    return sum + upload.archive.storedByteLength;
+  }, 0);
+  const specs = uploads.map(function (upload) {
+    return {
+      name: upload.archive.fileName,
+      mimeType: upload.archive.mimeType,
+      parentId: upload.folderId,
+      bytes: upload.archive.storedBytes,
+      payloadSha256: upload.archive.storedSha256,
+      appProperties: archiveIntegrityProperties_(upload.archive),
+    };
+  });
+  const created = measureOperation_(context.metrics, 'driveArchiveCreateParallel', function () {
+    return driveApiCreateFiles_(
+      specs,
+      isS3StorageBackend_() ? null : scriptService_().getOAuthToken()
+    );
+  }, totalBytes);
+  if (created.length !== uploads.length) {
+    throw new Error('Parallel Drive upload response count did not match the request count.');
+  }
+  uploads.forEach(function (upload, index) {
+    let file = created[index];
+    let resolution = upload.resolution;
+    let archive = upload.archive;
+    if (isS3StorageBackend_() && file && file.preconditionFailed) {
+      const recovered = recoverS3ConditionalCreate_(upload, file, context);
+      file = recovered.file;
+      resolution = recovered.resolution;
+      archive = recovered.archive;
+    }
+    const parents = file.parents || [];
+    if (!file.id || file.name !== archive.fileName ||
+        Number(file.size) !== Number(archive.storedByteLength) ||
+        file.mimeType !== archive.mimeType || parents.indexOf(upload.folderId) === -1) {
+      throw new Error('Parallel Drive upload returned mismatched metadata for Gmail ID ' + upload.id + '.');
+    }
+    records[upload.recordIndex] = buildExportedRecord_({
+      id: upload.id,
+      entry: upload.entry,
+      message: upload.message,
+      archiveShard: upload.archiveShard,
+      queueSegment: upload.queueSegment,
+      archive: archive,
+      driveFileId: file.id,
+      resolution: resolution,
+    });
+  });
+}
+
 function driveApiCreateFiles_(specs, oauthToken) {
   if (isS3StorageBackend_()) return s3ApiCreateFiles_(specs);
   const requests = (specs || []).map(function (spec, index) {

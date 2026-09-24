@@ -436,7 +436,7 @@ function listCanonical(folder) {
     )).map(x => x.id),
     ['d1', 's1', 'd2', 's2']
   );
-  assert.strictEqual(sandbox.__BACKUP_CONFIG.VERSION, '1.3.0-dev.19');
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.VERSION, '1.3.0-dev.20');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.DRIVE_WRITE_MODE, 'PARALLEL_API');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.ARCHIVE_ENCODING, 'ZIP');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_MAX_PARALLEL_REQUESTS, 64);
@@ -445,7 +445,7 @@ function listCanonical(folder) {
   assert.strictEqual(sandbox.__BACKUP_CONFIG.APPLY_REPLAY_BATCH_SIZE, 1);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.APPLY_MAX_MESSAGE_ATTEMPTS, 3);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_REPLAY_FULL_HASH_MAX_BYTES, 8 * 1024 * 1024);
-  assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.19');
+  assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.20');
 
   // SigV4 requests never expose credentials in URLs and sign all required
   // S3 headers. The XML parser covers paginated objects and virtual folders.
@@ -1144,6 +1144,29 @@ function listCanonical(folder) {
   assert.strictEqual(conflictRecords[0].storageFileId, conflictFile.getId());
   assert.strictEqual(conflictRecords[0].foundExisting, true);
   assert.strictEqual(conflictRecords[0].recoveredExisting, true);
+
+  const sequentialConflictFolder = {
+    getId() { return conflictFolder.getId(); },
+    createFileWithDescription() {
+      const error = new Error('already exists');
+      error.code = 'S3_PRECONDITION_FAILED';
+      throw error;
+    },
+  };
+  filesById.set(conflictFolder.getId() + conflictArchive.fileName, conflictFile);
+  const sequentialRecovered = sandbox.GmailBackupLibrary.withRuntime(conflictRuntime, function () {
+    return sandbox.createOrRecoverS3ArchiveFile_({
+      id: 'parallel-conflict',
+      archive: conflictArchive,
+      canonical: {byId: {}, allById: {}},
+      dataFolder: sequentialConflictFolder,
+      rootFolder: root,
+      folderId: conflictFolder.getId(),
+      resolution: {file: null, foundExisting: false, replacedConflict: false, quarantinedCount: 0},
+    }, {metrics: sandbox.newOperationMetrics_()});
+  });
+  assert.strictEqual(sequentialRecovered.storageFile, conflictFile);
+  assert.strictEqual(sequentialRecovered.resolution.foundExisting, true);
 
   // Catalog updates use one parallel media request while keeping the cached
   // shard map authoritative for later batches in the same execution.
@@ -2270,7 +2293,7 @@ function listCanonical(folder) {
     : null;
   const statusWritesBefore = statusTextFile ? statusTextFile.setContentCalls : 0;
   const machineStatus = sandbox.agentStatus();
-  assert.strictEqual(machineStatus.exporterVersion, '1.3.0-dev.19');
+  assert.strictEqual(machineStatus.exporterVersion, '1.3.0-dev.20');
   assert.strictEqual(
     statusTextFile ? statusTextFile.setContentCalls : 0,
     statusWritesBefore,

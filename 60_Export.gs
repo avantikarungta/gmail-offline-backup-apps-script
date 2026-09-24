@@ -297,10 +297,10 @@ function exportQueueBatch_(
     const sha256 = measureOperation_(context.metrics, 'sha256', function () {
       return sha256Hex_(bytes);
     }, bytes.length);
-    const archive = measureOperation_(context.metrics, 'archiveEncode', function () {
+    let archive = measureOperation_(context.metrics, 'archiveEncode', function () {
       return buildArchivePayload_(id, bytes, sha256);
     }, bytes.length);
-    const resolution = measureOperation_(context.metrics, 'driveCanonicalResolve', function () {
+    let resolution = measureOperation_(context.metrics, 'driveCanonicalResolve', function () {
       return resolveCanonicalForExport_(canonical, id, archive, layout.root);
     });
     let file = resolution.file;
@@ -337,10 +337,20 @@ function exportQueueBatch_(
     }
 
     if (!file) {
-      const blob = utilitiesService_().newBlob(archive.storedBytes, archive.mimeType, archive.fileName);
-      file = measureOperation_(context.metrics, 'driveArchiveCreate', function () {
-        return createArchiveFileWithIntegrity_(dataFolder, blob, archive);
-      }, archive.storedByteLength);
+      if (isS3StorageBackend_()) {
+        const recovered = createOrRecoverS3ArchiveFile_({
+          id: id, archive: archive, canonical: canonical, dataFolder: dataFolder,
+          rootFolder: layout.root, folderId: dataFolder.getId(), resolution: resolution,
+        }, context);
+        file = recovered.storageFile;
+        resolution = recovered.resolution;
+        archive = recovered.archive;
+      } else {
+        const blob = utilitiesService_().newBlob(archive.storedBytes, archive.mimeType, archive.fileName);
+        file = measureOperation_(context.metrics, 'driveArchiveCreate', function () {
+          return createArchiveFileWithIntegrity_(dataFolder, blob, archive);
+        }, archive.storedByteLength);
+      }
       canonical.byId[id] = file;
       canonical.allById[id] = [file];
     }
@@ -414,61 +424,6 @@ function parallelArchiveUploadByteLimit_() {
   return Number(isS3StorageBackend_()
     ? backupConfig_().S3_MAX_PARALLEL_BYTES
     : backupConfig_().DRIVE_API_MAX_PARALLEL_BYTES);
-}
-
-function flushParallelDriveUploads_(pendingUploads, records, context) {
-  if (!(pendingUploads || []).length) return;
-  const uploads = pendingUploads.slice();
-  pendingUploads.length = 0;
-  const totalBytes = uploads.reduce(function (sum, upload) {
-    return sum + upload.archive.storedByteLength;
-  }, 0);
-  const specs = uploads.map(function (upload) {
-    return {
-      name: upload.archive.fileName,
-      mimeType: upload.archive.mimeType,
-      parentId: upload.folderId,
-      bytes: upload.archive.storedBytes,
-      payloadSha256: upload.archive.storedSha256,
-      appProperties: archiveIntegrityProperties_(upload.archive),
-    };
-  });
-  const created = measureOperation_(context.metrics, 'driveArchiveCreateParallel', function () {
-    return driveApiCreateFiles_(
-      specs,
-      isS3StorageBackend_() ? null : scriptService_().getOAuthToken()
-    );
-  }, totalBytes);
-  if (created.length !== uploads.length) {
-    throw new Error('Parallel Drive upload response count did not match the request count.');
-  }
-  uploads.forEach(function (upload, index) {
-    let file = created[index];
-    let resolution = upload.resolution;
-    let archive = upload.archive;
-    if (isS3StorageBackend_() && file && file.preconditionFailed) {
-      const recovered = recoverS3ConditionalCreate_(upload, file, context);
-      file = recovered.file;
-      resolution = recovered.resolution;
-      archive = recovered.archive;
-    }
-    const parents = file.parents || [];
-    if (!file.id || file.name !== archive.fileName ||
-        Number(file.size) !== Number(archive.storedByteLength) ||
-        file.mimeType !== archive.mimeType || parents.indexOf(upload.folderId) === -1) {
-      throw new Error('Parallel Drive upload returned mismatched metadata for Gmail ID ' + upload.id + '.');
-    }
-    records[upload.recordIndex] = buildExportedRecord_({
-      id: upload.id,
-      entry: upload.entry,
-      message: upload.message,
-      archiveShard: upload.archiveShard,
-      queueSegment: upload.queueSegment,
-      archive: archive,
-      driveFileId: file.id,
-      resolution: resolution,
-    });
-  });
 }
 
 function buildExportedRecord_(input) {

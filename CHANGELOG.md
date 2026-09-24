@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0-dev.20 — staging
+
+- Extended integrity-verified S3/R2 create-conflict recovery to large objects
+  above the parallel upload-payload ceiling.
+- Moved the shared parallel upload coordinator into the platform-storage module
+  so the exporter remains focused and within its module-size boundary.
+
 ## 1.3.0-dev.19 — staging
 
 - Made parallel S3/R2 create-only conflicts replay-safe: HTTP 412 now enters
