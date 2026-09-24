@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0-dev.27 — staging
+
+- Reduced the parallel S3/R2 upload-payload wave from 8 MiB to 4 MiB after a
+  live 8-message transaction still exhausted V8 while its first single-message
+  replay completed normally.
+- Kept eight-message durable transactions and split their uploads into smaller
+  waves, targeting request-signing heap amplification without giving up commit
+  and catalog amortization.
+
 ## 1.3.0-dev.26 — staging
 
 - Reduced fresh S3/R2 APPLY transactions from 16 to 8 messages after the live

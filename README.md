@@ -1,13 +1,13 @@
 # Gmail Offline Backup for Google Apps Script
 
-**Release:** 1.3.0-dev.26
+**Release:** 1.3.0-dev.27
 **Purpose:** Create a resumable, verifiable offline Gmail archive when Google Takeout or IMAP is unavailable, but the user is authorized to access Gmail through Apps Script and the Gmail API.
 
 The exporter reads Gmail through the official Advanced Gmail service, writes complete RFC 2822 messages as one-entry `.eml.zip` files to Google Drive or an S3-compatible bucket, and records Gmail-only metadata in a sharded catalog. Existing plain `.eml` files remain valid in mixed archives. It never sends, labels, deletes, archives, forwards, or otherwise modifies Gmail.
 
 > Use this only for mail the account holder is permitted to retain. A technical ability to export data does not override company retention, confidentiality, or acceptable-use rules.
 
-## What is new in 1.3.0-dev.26
+## What is new in 1.3.0-dev.27
 
 APPLY now detects an immutable commit that covers a cursor regressed by a stale
 overlapping worker, including a valid covering commit previously moved into
@@ -19,7 +19,8 @@ but does not full-read message bodies.
 
 Fresh S3/R2 APPLY transactions are capped at 8 messages after live 64-, 31-,
 and 16-message transactions exceeded the Apps Script V8 heap. Independent upload
-waves remain capped at 8 MiB, and failed checkpoints still replay one message
+waves are capped at 4 MiB after an 8-message transaction still exhausted V8 at
+the former 8 MiB wave bound. Failed checkpoints still replay one message
 at a time.
 
 - Existing R2/S3 objects above the bounded replay-hash limit are no longer

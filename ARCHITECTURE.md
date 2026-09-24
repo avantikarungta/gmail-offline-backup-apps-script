@@ -199,7 +199,7 @@ For each bounded queue range:
 
 For S3-compatible storage, a new range contains at most 8 messages. That range
 shares one commit, catalog merge, and final state checkpoint, while parallel
-upload payloads remain independently capped at 8 MiB. Fresh ranges omit
+upload payloads remain independently capped at 4 MiB. Fresh ranges omit
 canonical preflight reads because PLAN proved them absent and the create-only
 PUT is the concurrency guard; replayed ranges probe both supported encodings.
 Affected catalog shards are read and conditionally updated in bounded parallel
