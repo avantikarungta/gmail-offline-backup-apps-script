@@ -1,13 +1,13 @@
 # Gmail Offline Backup for Google Apps Script
 
-**Release:** 1.3.0-dev.25
+**Release:** 1.3.0-dev.26
 **Purpose:** Create a resumable, verifiable offline Gmail archive when Google Takeout or IMAP is unavailable, but the user is authorized to access Gmail through Apps Script and the Gmail API.
 
 The exporter reads Gmail through the official Advanced Gmail service, writes complete RFC 2822 messages as one-entry `.eml.zip` files to Google Drive or an S3-compatible bucket, and records Gmail-only metadata in a sharded catalog. Existing plain `.eml` files remain valid in mixed archives. It never sends, labels, deletes, archives, forwards, or otherwise modifies Gmail.
 
 > Use this only for mail the account holder is permitted to retain. A technical ability to export data does not override company retention, confidentiality, or acceptable-use rules.
 
-## What is new in 1.3.0-dev.25
+## What is new in 1.3.0-dev.26
 
 APPLY now detects an immutable commit that covers a cursor regressed by a stale
 overlapping worker, including a valid covering commit previously moved into
@@ -17,8 +17,8 @@ without re-downloading or re-uploading the messages. Recovery validates commit
 membership plus every referenced object's location, name, type, and byte count,
 but does not full-read message bodies.
 
-Fresh S3/R2 APPLY transactions are capped at 16 messages after live 64- and
-31-message transactions exceeded the Apps Script V8 heap. Independent upload
+Fresh S3/R2 APPLY transactions are capped at 8 messages after live 64-, 31-,
+and 16-message transactions exceeded the Apps Script V8 heap. Independent upload
 waves remain capped at 8 MiB, and failed checkpoints still replay one message
 at a time.
 
@@ -699,7 +699,7 @@ WORK_QUEUE_SEGMENT_SIZE: 500,
 QUEUE_ROWS_PER_TRANSACTION: 5000,
 APPLY_BATCH_SIZE: 20,
 INITIAL_APPLY_BATCH_SIZE: 5,
-S3_APPLY_BATCH_SIZE: 16,
+S3_APPLY_BATCH_SIZE: 8,
 APPLY_REPLAY_BATCH_SIZE: 1,
 APPLY_MAX_MESSAGE_ATTEMPTS: 3,
 DEAD_LETTER_FILE: 'dead-letter-queue.json',
@@ -714,7 +714,7 @@ LOG_PROGRESS_TO_CONSOLE: true,
 
 Avoid raising `EXECUTION_BUDGET_MS` close to the six-minute Apps Script limit. The checkpoint margin is a correctness feature, not unused capacity.
 
-S3/R2 APPLY groups up to 16 messages into one durable transaction and reads or
+S3/R2 APPLY groups up to 8 messages into one durable transaction and reads or
 writes small metadata objects in waves of up to 64 requests. Fresh ranges rely
 on create-only message writes instead of redundant canonical preflight reads;
 replays still probe both supported encodings. This amortizes the deterministic

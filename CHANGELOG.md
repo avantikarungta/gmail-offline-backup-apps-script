@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0-dev.26 — staging
+
+- Reduced fresh S3/R2 APPLY transactions from 16 to 8 messages after the live
+  16-message proof still exhausted the Apps Script V8 heap.
+- Retained batching across healthy messages while leaving failed checkpoints
+  to the existing one-message retry and dead-letter isolation path.
+
 ## 1.3.0-dev.25 — staging
 
 - Reduced fresh S3/R2 APPLY transactions from 32 to 16 messages after a

@@ -197,7 +197,7 @@ For each bounded queue range:
 7. Merge records into each affected catalog shard.
 8. Advance queue segment/offset and clear `inFlight`.
 
-For S3-compatible storage, a new range contains at most 16 messages. That range
+For S3-compatible storage, a new range contains at most 8 messages. That range
 shares one commit, catalog merge, and final state checkpoint, while parallel
 upload payloads remain independently capped at 8 MiB. Fresh ranges omit
 canonical preflight reads because PLAN proved them absent and the create-only
