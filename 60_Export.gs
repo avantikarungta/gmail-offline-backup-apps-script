@@ -304,7 +304,6 @@ function exportQueueBatch_(
       return resolveCanonicalForExport_(canonical, id, archive, layout.root);
     });
     let file = resolution.file;
-
     if (!file && shouldUseParallelDriveUpload_(archive.storedByteLength)) {
       if (pendingUploads.length > 0 &&
           (pendingUploads.length >= parallelArchiveUploadFileLimit_() ||
@@ -322,6 +321,9 @@ function exportQueueBatch_(
         archiveShard: archiveShard,
         queueSegment: segmentIndex,
         archive: archive,
+        dataFolder: dataFolder,
+        rootFolder: layout.root,
+        canonical: canonical,
         folderId: dataFolder.getId(),
         resolution: resolution,
       });
@@ -441,11 +443,19 @@ function flushParallelDriveUploads_(pendingUploads, records, context) {
     throw new Error('Parallel Drive upload response count did not match the request count.');
   }
   uploads.forEach(function (upload, index) {
-    const file = created[index];
+    let file = created[index];
+    let resolution = upload.resolution;
+    let archive = upload.archive;
+    if (isS3StorageBackend_() && file && file.preconditionFailed) {
+      const recovered = recoverS3ConditionalCreate_(upload, file, context);
+      file = recovered.file;
+      resolution = recovered.resolution;
+      archive = recovered.archive;
+    }
     const parents = file.parents || [];
-    if (!file.id || file.name !== upload.archive.fileName ||
-        Number(file.size) !== Number(upload.archive.storedByteLength) ||
-        file.mimeType !== upload.archive.mimeType || parents.indexOf(upload.folderId) === -1) {
+    if (!file.id || file.name !== archive.fileName ||
+        Number(file.size) !== Number(archive.storedByteLength) ||
+        file.mimeType !== archive.mimeType || parents.indexOf(upload.folderId) === -1) {
       throw new Error('Parallel Drive upload returned mismatched metadata for Gmail ID ' + upload.id + '.');
     }
     records[upload.recordIndex] = buildExportedRecord_({
@@ -454,9 +464,9 @@ function flushParallelDriveUploads_(pendingUploads, records, context) {
       message: upload.message,
       archiveShard: upload.archiveShard,
       queueSegment: upload.queueSegment,
-      archive: upload.archive,
+      archive: archive,
       driveFileId: file.id,
-      resolution: upload.resolution,
+      resolution: resolution,
     });
   });
 }

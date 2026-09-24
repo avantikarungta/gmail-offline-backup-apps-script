@@ -436,7 +436,7 @@ function listCanonical(folder) {
     )).map(x => x.id),
     ['d1', 's1', 'd2', 's2']
   );
-  assert.strictEqual(sandbox.__BACKUP_CONFIG.VERSION, '1.3.0-dev.18');
+  assert.strictEqual(sandbox.__BACKUP_CONFIG.VERSION, '1.3.0-dev.19');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.DRIVE_WRITE_MODE, 'PARALLEL_API');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.ARCHIVE_ENCODING, 'ZIP');
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_MAX_PARALLEL_REQUESTS, 64);
@@ -445,7 +445,7 @@ function listCanonical(folder) {
   assert.strictEqual(sandbox.__BACKUP_CONFIG.APPLY_REPLAY_BATCH_SIZE, 1);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.APPLY_MAX_MESSAGE_ATTEMPTS, 3);
   assert.strictEqual(sandbox.__BACKUP_CONFIG.S3_REPLAY_FULL_HASH_MAX_BYTES, 8 * 1024 * 1024);
-  assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.18');
+  assert.strictEqual(sandbox.GmailBackupLibrary.version(), '1.3.0-dev.19');
 
   // SigV4 requests never expose credentials in URLs and sign all required
   // S3 headers. The XML parser covers paginated objects and virtual folders.
@@ -572,6 +572,7 @@ function listCanonical(folder) {
     },
   };
   const capturedS3Waves = [];
+  let s3CreateStatus = 200;
   const s3BatchRuntime = sandbox.GmailBackupLibrary.createRuntime({
     config: {
       STORAGE_BACKEND: 'S3', S3_BUCKET: 'archive-bucket',
@@ -584,7 +585,7 @@ function listCanonical(folder) {
         fetchAll(requests) {
           capturedS3Waves.push(requests);
           return requests.map(() => ({
-            getResponseCode() { return 200; },
+            getResponseCode() { return s3CreateStatus; },
             getAllHeaders() { return {ETag: '"batch-etag"'}; },
             getContentText() { return ''; },
           }));
@@ -618,14 +619,24 @@ function listCanonical(folder) {
   assert.match(capturedS3Waves[0][0].headers.authorization, /^AWS4-HMAC-SHA256/);
   assert(capturedS3Waves[0][0].headers['x-amz-meta-gb-description-b64']);
   assert.strictEqual(s3BatchResults[0].id, 'mail/root/data/batch.eml.zip');
+  s3CreateStatus = 412;
+  const s3ConflictResults = sandbox.GmailBackupLibrary.withRuntime(s3BatchRuntime, function () {
+    return sandbox.s3ApiCreateFiles_([{
+      name: 'existing.eml', mimeType: 'message/rfc822', parentId: 'mail/root/data/',
+      bytes: [4, 5, 6], appProperties: {gbSchema: '1', gbRawSha256: 'def'},
+    }]);
+  });
+  assert.strictEqual(s3ConflictResults[0].id, 'mail/root/data/existing.eml');
+  assert.strictEqual(s3ConflictResults[0].preconditionFailed, true);
+  s3CreateStatus = 200;
   const s3UpdateResults = sandbox.GmailBackupLibrary.withRuntime(s3BatchRuntime, function () {
     return sandbox.s3ApiUpdateMedia_([{
       fileId: 'mail/root/catalog/shard-00.json', content: '[{"id":"1"}]',
       mimeType: 'application/json', etag: '"prior-etag"',
     }]);
   });
-  assert.strictEqual(capturedS3Waves.length, 2);
-  assert.strictEqual(capturedS3Waves[1][0].headers['if-match'], '"prior-etag"');
+  assert.strictEqual(capturedS3Waves.length, 3);
+  assert.strictEqual(capturedS3Waves[2][0].headers['if-match'], '"prior-etag"');
   assert.strictEqual(s3UpdateResults[0].id, 'mail/root/catalog/shard-00.json');
 
   // S3 APPLY preloads deterministic canonical metadata and catalog JSON in
@@ -1085,6 +1096,54 @@ function listCanonical(folder) {
   assert.strictEqual(parallelRecords[0].fileName, 'parallel-message.eml.zip');
   assert.strictEqual(observedParallelSpecs[0].appProperties.gbRawSha256, parallelArchive.rawSha256);
   assert.strictEqual(parallelRecords[0].recoveredExisting, false);
+
+  // A create-only S3 conflict is a replay signal, not a fatal error. The
+  // parallel path verifies the deterministic existing object before adopting
+  // it into the commit record.
+  const conflictFolder = root.createFolder('parallel-s3-conflict');
+  const conflictRaw = Array.from(Buffer.from('existing canonical message', 'utf8'));
+  const conflictArchive = sandbox.GmailBackupLibrary.withRuntime(
+    sandbox.GmailBackupLibrary.createRuntime({config: {ARCHIVE_ENCODING: 'EML'}}),
+    function () { return sandbox.buildArchivePayload_('parallel-conflict', conflictRaw); }
+  );
+  const conflictFile = conflictFolder.createFile(new MockBlob(
+    conflictArchive.storedBytes,
+    conflictArchive.mimeType,
+    conflictArchive.fileName
+  ));
+  conflictFile.setDescription(sandbox.archiveIntegrityDescription_(conflictArchive));
+  sandbox.driveApiCreateFiles_ = function () {
+    return [{
+      id: conflictFile.getId(),
+      name: conflictArchive.fileName,
+      parents: [conflictFolder.getId()],
+      preconditionFailed: true,
+    }];
+  };
+  const conflictRuntime = sandbox.GmailBackupLibrary.createRuntime({
+    config: {STORAGE_BACKEND: 'S3', ARCHIVE_ENCODING: 'EML'},
+    services: {drive: sandbox.DriveApp},
+  });
+  const conflictRecords = [null];
+  sandbox.GmailBackupLibrary.withRuntime(conflictRuntime, function () {
+    sandbox.flushParallelDriveUploads_([{
+      recordIndex: 0,
+      id: 'parallel-conflict',
+      entry: {id: 'parallel-conflict', threadId: 'thread-conflict'},
+      message: {threadId: 'thread-conflict', labelIds: ['INBOX'], sizeEstimate: conflictRaw.length},
+      archiveShard: '01',
+      queueSegment: 0,
+      archive: conflictArchive,
+      dataFolder: conflictFolder,
+      rootFolder: root,
+      canonical: {byId: {}, allById: {}},
+      folderId: conflictFolder.getId(),
+      resolution: {file: null, foundExisting: false, replacedConflict: false, quarantinedCount: 0},
+    }], conflictRecords, {metrics: sandbox.newOperationMetrics_()});
+  });
+  assert.strictEqual(conflictRecords[0].storageFileId, conflictFile.getId());
+  assert.strictEqual(conflictRecords[0].foundExisting, true);
+  assert.strictEqual(conflictRecords[0].recoveredExisting, true);
 
   // Catalog updates use one parallel media request while keeping the cached
   // shard map authoritative for later batches in the same execution.
@@ -2211,7 +2270,7 @@ function listCanonical(folder) {
     : null;
   const statusWritesBefore = statusTextFile ? statusTextFile.setContentCalls : 0;
   const machineStatus = sandbox.agentStatus();
-  assert.strictEqual(machineStatus.exporterVersion, '1.3.0-dev.18');
+  assert.strictEqual(machineStatus.exporterVersion, '1.3.0-dev.19');
   assert.strictEqual(
     statusTextFile ? statusTextFile.setContentCalls : 0,
     statusWritesBefore,

@@ -1,4 +1,4 @@
-# Release Validation — 1.3.0-dev.18
+# Release Validation — 1.3.0-dev.19
 
 ## Automated checks performed
 
@@ -38,6 +38,8 @@
 - legacy in-flight checkpoint compatibility and durable pre-Gmail attempt counts;
 - one-message replay isolation, bounded retry exhaustion, and DLQ publication;
 - 64-message S3/R2 healthy-path batching with one-message failure replay;
+- verified adoption of identical S3/R2 objects after parallel create-only PUT
+  conflicts, without weakening conditional-write or hash guarantees;
 - bounded parallel S3/R2 catalog prefetch and replay-only canonical probing;
 - crash after DLQ evidence but before commit, followed by idempotent replay;
 - dead-letter catalog markers remaining unhealthy for a future PLAN.

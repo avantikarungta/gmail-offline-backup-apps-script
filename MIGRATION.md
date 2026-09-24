@@ -1,5 +1,13 @@
 # Migration Guide
 
+## From 1.3.0-dev.18 to 1.3.0-dev.19
+
+1. Push all modules while APPLY is stopped on its preserved checkpoint.
+2. Resume the same plan. A create-only S3/R2 conflict now verifies and adopts
+   an identical deterministic object instead of returning APPLY to `ERROR`.
+3. No archive migration, credential change, capability probe, or new PLAN is
+   required. Conflicting bytes are still quarantined rather than overwritten.
+
 ## From 1.3.0-dev.17 to 1.3.0-dev.18
 
 1. Checkpoint-safely pause an active APPLY, validate, and push all modules.

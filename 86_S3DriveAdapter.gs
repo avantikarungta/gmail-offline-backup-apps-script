@@ -375,6 +375,39 @@ function s3ConcurrentModificationError_() {
   return error;
 }
 
+function recoverS3ConditionalCreate_(upload, conflict, context) {
+  const existing = driveService_().getFileById(conflict.id);
+  const canonical = upload.canonical || {byId: {}, allById: {}};
+  canonical.byId[upload.id] = existing;
+  canonical.allById[upload.id] = [existing];
+  const resolution = measureOperation_(context.metrics, 's3ConditionalCreateRecovery', function () {
+    return resolveCanonicalForExport_(canonical, upload.id, upload.archive, upload.rootFolder);
+  }, upload.archive.storedByteLength);
+  let file = resolution.file;
+  const archive = resolution.storage || upload.archive;
+  if (!file) {
+    const blob = utilitiesService_().newBlob(
+      upload.archive.storedBytes,
+      upload.archive.mimeType,
+      upload.archive.fileName
+    );
+    file = createArchiveFileWithIntegrity_(upload.dataFolder, blob, upload.archive);
+    canonical.byId[upload.id] = file;
+    canonical.allById[upload.id] = [file];
+  }
+  return {
+    archive: archive,
+    resolution: resolution,
+    file: {
+      id: file.getId(),
+      name: file.getName(),
+      size: String(file.getSize()),
+      mimeType: file.getMimeType(),
+      parents: [upload.folderId],
+    },
+  };
+}
+
 function prepareS3CanonicalBatchContexts_(layout, entries, context, probeExisting) {
   context.canonicalByShard = context.canonicalByShard || {};
   context.dataFoldersByName = context.dataFoldersByName || {};

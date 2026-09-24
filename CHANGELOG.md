@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0-dev.19 — staging
+
+- Made parallel S3/R2 create-only conflicts replay-safe: HTTP 412 now enters
+  canonical verification instead of stopping APPLY.
+- Adopted an existing deterministic object only after its name, type, byte
+  count, integrity metadata, and content hash match the queued Gmail message.
+- Preserved quarantine/recreate behavior for mismatched objects and kept
+  transaction checkpoints, immutable commits, and catalog ordering unchanged.
+
 ## 1.3.0-dev.18 — staging
 
 - Increased healthy S3/R2 transactions and small-request waves to 64 so one

@@ -590,16 +590,29 @@ function s3ApiCreateFiles_(specs) {
     responses.forEach(function (response, index) {
       const status = Number(response.getResponseCode());
       const headers = s3ResponseHeaders_(response);
+      const item = wave[index];
+      // A prior invocation may have completed one or more PUTs before Apps
+      // Script terminated. Preserve the create-only guard, but return the
+      // deterministic key so the exporter can verify and adopt that object
+      // through the normal canonical-resolution path.
+      if (status === 412) {
+        results.push({
+          id: item.key,
+          name: item.spec.name,
+          parents: [normalizeS3Prefix_(item.spec.parentId)],
+          preconditionFailed: true,
+        });
+        return;
+      }
       if (status < 200 || status >= 300) {
         const error = new Error(
           'Parallel S3 conditional create failed for request ' + index + ' with HTTP ' + status + ': ' +
           sanitizeS3ErrorBody_(response.getContentText ? response.getContentText() : '')
         );
-        error.code = status === 412 ? 'S3_PRECONDITION_FAILED' : 'S3_HTTP_' + status;
+        error.code = 'S3_HTTP_' + status;
         error.status = status;
         throw error;
       }
-      const item = wave[index];
       results.push({
         id: item.key,
         name: item.spec.name,
