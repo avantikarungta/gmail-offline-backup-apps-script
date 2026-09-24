@@ -1,4 +1,4 @@
-# Release Validation — 1.3.0-dev.27
+# Release Validation — 1.3.0-dev.28
 
 ## Automated checks performed
 

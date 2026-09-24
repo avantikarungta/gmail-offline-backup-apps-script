@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0-dev.28 — staging
+
+- Reduced fresh S3/R2 transactions to four messages and parallel payload waves
+  to 2 MiB after the live eight-message/4 MiB proof still exhausted V8.
+- Preserved one-message replay and durable dead-letter isolation while keeping
+  bounded batching for the healthy path.
+
 ## 1.3.0-dev.27 — staging
 
 - Reduced the parallel S3/R2 upload-payload wave from 8 MiB to 4 MiB after a

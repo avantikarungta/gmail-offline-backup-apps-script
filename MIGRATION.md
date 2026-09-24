@@ -1,5 +1,13 @@
 # Migration Guide
 
+## From 1.3.0-dev.27 to 1.3.0-dev.28
+
+1. Checkpoint-safely pause APPLY and push all modules.
+2. Resume the preserved plan. S3/R2 groups at most four messages per durable
+   transaction and buffers at most 2 MiB of payload per parallel upload wave.
+3. No archive migration, credential change, capability probe, or new PLAN is
+   required.
+
 ## From 1.3.0-dev.26 to 1.3.0-dev.27
 
 1. Checkpoint-safely pause APPLY and push all modules.
