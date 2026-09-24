@@ -197,9 +197,9 @@ For each bounded queue range:
 7. Merge records into each affected catalog shard.
 8. Advance queue segment/offset and clear `inFlight`.
 
-For S3-compatible storage, a new range contains at most 4 messages. That range
+For S3-compatible storage, a new range contains one message. That range
 shares one commit, catalog merge, and final state checkpoint, while parallel
-upload payloads remain independently capped at 2 MiB. Fresh ranges omit
+upload payloads remain independently capped at 1 MiB. Fresh ranges omit
 canonical preflight reads because PLAN proved them absent and the create-only
 PUT is the concurrency guard; replayed ranges probe both supported encodings.
 Affected catalog shards are read and conditionally updated in bounded parallel

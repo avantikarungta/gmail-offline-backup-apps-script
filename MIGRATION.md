@@ -1,5 +1,14 @@
 # Migration Guide
 
+## From 1.3.0-dev.28 to 1.3.0-dev.29
+
+1. Checkpoint-safely pause APPLY and push all modules.
+2. Resume the preserved plan. S3/R2 processes one message per durable
+   transaction and buffers at most 1 MiB per parallel upload request; oversized
+   single messages retain the existing retry/dead-letter behavior.
+3. No archive migration, credential change, capability probe, or new PLAN is
+   required.
+
 ## From 1.3.0-dev.27 to 1.3.0-dev.28
 
 1. Checkpoint-safely pause APPLY and push all modules.

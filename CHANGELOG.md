@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0-dev.29 — staging
+
+- Switched S3/R2 APPLY to one-message transactions with a 1 MiB parallel
+  payload bound after the live four-message/2 MiB proof still failed before
+  commit.
+- This avoids repeatedly losing multi-message work in large-message mailbox
+  regions; durable retries and the DLQ continue to isolate messages that cannot
+  fit individually in the Apps Script V8 heap.
+
 ## 1.3.0-dev.28 — staging
 
 - Reduced fresh S3/R2 transactions to four messages and parallel payload waves
