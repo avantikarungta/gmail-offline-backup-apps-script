@@ -99,6 +99,32 @@ function processApplySlice_(state, executionStartedMs) {
     let commitFile = loadedCommit.file;
     let commit = loadedCommit.commit;
 
+    // A stale overlapping worker can persist an older cursor after a newer
+    // worker has already published a larger deterministic commit. Reuse the
+    // still-immutable suffix of that covering commit instead of downloading
+    // or uploading those messages again. Only the records at or after the
+    // current cursor are counted, so already-advanced prefixes are not
+    // double-counted.
+    if (!commitFile && replayingInFlight) {
+      const coveringCommit = loadCoveringApplyCommit_(
+        segmentCommitsFolder, state, layout, segmentIndex, start, entries
+      );
+      if (coveringCommit) {
+        endExclusive = coveringCommit.endExclusive;
+        batchEntries = entries.slice(start, endExclusive);
+        commitName = coveringCommit.commitName;
+        commitFile = coveringCommit.file;
+        commit = coveringCommit.commit;
+        logProgressEvent_('APPLY_COVERING_COMMIT_RECOVERED', state, {
+          segmentIndex: segmentIndex,
+          start: start,
+          endExclusive: endExclusive,
+          coveringStart: coveringCommit.coveringStart,
+          coveringEndExclusive: coveringCommit.coveringEndExclusive,
+        });
+      }
+    }
+
     // If a prior execution died after persisting a large checkpoint but before
     // publishing its commit, reduce that exact frozen range before replay. Any
     // objects written before the crash remain safe: canonical resolution will
@@ -180,52 +206,6 @@ function processApplySlice_(state, executionStartedMs) {
   state.lastSliceMetrics = summarizeOperationMetrics_(metrics);
   if (state.apply.segmentIndex >= segmentCount) {
     finalizeApply_(state);
-  }
-}
-
-function loadValidApplyCommit_(
-  segmentCommitsFolder,
-  commitName,
-  state,
-  layout,
-  segmentIndex,
-  start,
-  endExclusive,
-  batchEntries
-) {
-  let commitFile = firstFileByName_(segmentCommitsFolder, commitName);
-  if (!commitFile) return {file: null, commit: null};
-
-  try {
-    const commit = readJsonFile_(commitFile, null);
-    validateCommit_(commit, state.plan.id, segmentIndex, start, endExclusive, batchEntries);
-    validateDeadLetterCommitEvidence_(state, commit);
-    if (backupConfig_().VERIFY_REPLAYED_COMMITS) {
-      const validation = validateCommittedFiles_(commit, layout);
-      if (!validation.ok) {
-        logger_().warn('Discarding an invalid replay checkpoint ' + commitName + ': ' +
-          JSON.stringify(validation.failures));
-        quarantineCheckpointFile_(
-          layout.root,
-          commitFile,
-          state.plan.id,
-          'segment-' + padNumber_(segmentIndex, 8),
-          commitName
-        );
-        return {file: null, commit: null};
-      }
-    }
-    return {file: commitFile, commit: commit};
-  } catch (error) {
-    logger_().warn('Discarding an unreadable replay checkpoint ' + commitName + ': ' + errorToString_(error));
-    quarantineCheckpointFile_(
-      layout.root,
-      commitFile,
-      state.plan.id,
-      'segment-' + padNumber_(segmentIndex, 8),
-      commitName
-    );
-    return {file: null, commit: null};
   }
 }
 

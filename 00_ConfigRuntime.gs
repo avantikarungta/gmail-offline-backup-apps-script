@@ -28,7 +28,7 @@
  */
 
 const BACKUP_CONFIG = Object.freeze({
-  VERSION: '1.3.0-dev.21',
+  VERSION: '1.3.0-dev.22',
 
   // Archive storage. GOOGLE_DRIVE preserves the existing behavior. S3 uses
   // the S3-compatible API and works with AWS S3, Cloudflare R2, and compatible

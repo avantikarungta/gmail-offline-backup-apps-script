@@ -31,6 +31,122 @@ function validateCommit_(commit, planId, location, start, endExclusive, expected
   });
 }
 
+function loadValidApplyCommit_(
+  segmentCommitsFolder,
+  commitName,
+  state,
+  layout,
+  segmentIndex,
+  start,
+  endExclusive,
+  batchEntries,
+  options
+) {
+  const settings = options || {};
+  let commitFile = firstFileByName_(segmentCommitsFolder, commitName);
+  if (!commitFile) return {file: null, commit: null};
+
+  try {
+    const commit = readJsonFile_(commitFile, null);
+    validateCommit_(commit, state.plan.id, segmentIndex, start, endExclusive, batchEntries);
+    validateDeadLetterCommitEvidence_(state, commit);
+    if (backupConfig_().VERIFY_REPLAYED_COMMITS && settings.verifyFiles !== false) {
+      const validation = validateCommittedFiles_(commit, layout);
+      if (!validation.ok) {
+        logger_().warn('Discarding an invalid replay checkpoint ' + commitName + ': ' +
+          JSON.stringify(validation.failures));
+        quarantineCheckpointFile_(
+          layout.root,
+          commitFile,
+          state.plan.id,
+          'segment-' + padNumber_(segmentIndex, 8),
+          commitName
+        );
+        return {file: null, commit: null};
+      }
+    }
+    return {file: commitFile, commit: commit};
+  } catch (error) {
+    logger_().warn('Discarding an unreadable replay checkpoint ' + commitName + ': ' + errorToString_(error));
+    quarantineCheckpointFile_(
+      layout.root,
+      commitFile,
+      state.plan.id,
+      'segment-' + padNumber_(segmentIndex, 8),
+      commitName
+    );
+    return {file: null, commit: null};
+  }
+}
+
+function loadCoveringApplyCommit_(segmentCommitsFolder, state, layout, segmentIndex, start, entries) {
+  const commitFiles = listFilesByName_(segmentCommitsFolder);
+  const candidates = Object.keys(commitFiles).map(function (name) {
+    const match = /^(\d{8})-(\d{8})\.json$/.exec(name);
+    return match ? {name: name, start: Number(match[1]), endExclusive: Number(match[2])} : null;
+  }).filter(function (candidate) {
+    return candidate && candidate.start <= Number(start) &&
+      candidate.endExclusive > Number(start) && candidate.endExclusive <= entries.length;
+  }).sort(function (a, b) {
+    return b.endExclusive - a.endExclusive || b.start - a.start;
+  });
+
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    const loaded = loadValidApplyCommit_(
+      segmentCommitsFolder,
+      candidate.name,
+      state,
+      layout,
+      segmentIndex,
+      candidate.start,
+      candidate.endExclusive,
+      entries.slice(candidate.start, candidate.endExclusive),
+      {verifyFiles: false}
+    );
+    if (!loaded.file) continue;
+    return {
+      file: loaded.file,
+      commit: sliceApplyCommit_(loaded.commit, start, candidate.endExclusive),
+      commitName: candidate.name,
+      endExclusive: candidate.endExclusive,
+      coveringStart: candidate.start,
+      coveringEndExclusive: candidate.endExclusive,
+    };
+  }
+  return null;
+}
+
+function sliceApplyCommit_(commit, start, endExclusive) {
+  const commitStart = Number(commit.start);
+  const commitEndExclusive = Number(commit.endExclusive);
+  const sliceStart = Number(start);
+  const sliceEndExclusive = Number(endExclusive);
+  if (sliceStart < commitStart || sliceEndExclusive > commitEndExclusive || sliceStart >= sliceEndExclusive) {
+    throw new Error('Cannot slice APPLY commit outside its immutable range.');
+  }
+  const records = (commit.records || []).slice(sliceStart - commitStart, sliceEndExclusive - commitStart);
+  const exportedRecords = records.filter(function (record) { return record.status === 'exported'; });
+  const originalCount = Math.max(1, commitEndExclusive - commitStart);
+  return Object.assign({}, commit, {
+    start: sliceStart,
+    endExclusive: sliceEndExclusive,
+    durationMs: Math.max(1, Math.round(Number(commit.durationMs || 1) * records.length / originalCount)),
+    summary: {
+      processed: records.length,
+      exported: exportedRecords.length,
+      gone: records.filter(function (record) { return record.status === 'gone'; }).length,
+      deadLettered: records.filter(function (record) { return record.status === 'dead-lettered'; }).length,
+      rawBytes: exportedRecords.reduce(function (sum, record) { return sum + Number(record.rawBytes || 0); }, 0),
+      storedBytes: exportedRecords.reduce(function (sum, record) {
+        return sum + Number(record.storedBytes || record.rawBytes || 0);
+      }, 0),
+    },
+    records: records,
+    coveringCommit: {start: commitStart, endExclusive: commitEndExclusive},
+  });
+}
+
 function validateInFlight_(inFlight, planId, location, start, entryCount) {
   const locationMatches = inFlight && inFlight.segmentIndex !== undefined
     ? Number(inFlight.segmentIndex) === Number(location)

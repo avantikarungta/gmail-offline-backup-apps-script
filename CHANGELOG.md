@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0-dev.22 — staging
+
+- Recovered a cursor regressed into the middle of an already-published APPLY
+  commit by adopting only that immutable commit's uncounted suffix.
+- Avoided duplicate Gmail reads, R2 uploads, catalog counts, and expensive
+  full-object validation during this narrow transaction-log recovery path.
+- Added a regression test for stale-worker cursor recovery and preserved the
+  ordinary full-integrity replay checks for exact checkpoints.
+
 ## 1.3.0-dev.21 — staging
 
 - Prevented Apps Script from full-reading an existing S3/R2 object above the

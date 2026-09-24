@@ -1,5 +1,13 @@
 # Migration Guide
 
+## From 1.3.0-dev.21 to 1.3.0-dev.22
+
+1. Checkpoint-safely pause APPLY and push all modules.
+2. Resume the preserved plan. If the cursor was regressed into an immutable
+   covering commit, APPLY adopts only its uncounted suffix and continues.
+3. No archive migration, credential change, capability probe, or new PLAN is
+   required.
+
 ## From 1.3.0-dev.20 to 1.3.0-dev.21
 
 1. Push all modules and resume the preserved checkpoint.
